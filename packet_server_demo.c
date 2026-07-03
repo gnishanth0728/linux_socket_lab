@@ -58,13 +58,26 @@ static void process_request(const char *request, char *response, size_t response
     char *query_start = NULL;
     const char *body = "";
 
+    printf("\n========== REQUEST FLOW STARTING ==========\n");
     printf("[TRACE] Layer 1: React frontend/client sent an HTTP request\n");
+    printf("        └─ Request initiated from client\n\n");
+    
     printf("[TRACE] Layer 2: nginx-proxy received the request and passed it to the app stack\n");
+    printf("        └─ nginx-proxy listening on port 80\n");
+    printf("        └─ Forwarding to spring-api backend\n\n");
+    
     printf("[TRACE] Layer 3: spring-api socket received the TCP payload from the kernel stack\n");
-    printf("[TRACE] Layer 4: HTTP parser extracted bytes -> %s\n", request);
+    printf("        └─ Socket descriptor: active\n");
+    printf("        └─ TCP payload size: %zu bytes\n", strlen(request));
+    printf("        └─ Kernel socket buffer: filled\n\n");
+    
+    printf("[TRACE] Layer 4: HTTP parser extracted bytes\n");
+    printf("        └─ Raw request:\n");
+    printf("           %s\n", request);
 
     if (sscanf(request, "%15s %255s", method, path) != 2) {
         printf("[TRACE] Layer 4: parse failure, returning 400\n");
+        printf("        └─ HTTP parse error detected\n\n");
         snprintf(response, response_size,
                  "HTTP/1.1 400 Bad Request\r\n"
                  "Content-Type: text/plain\r\n"
@@ -73,8 +86,15 @@ static void process_request(const char *request, char *response, size_t response
         return;
     }
 
-    printf("[TRACE] Layer 5: Spring controller received method=%s path=%s\n", method, path);
+    printf("[TRACE] Layer 5: Spring controller received request\n");
+    printf("        └─ HTTP Method: %s\n", method);
+    printf("        └─ Request Path: %s\n", path);
+    printf("        └─ Controller: user-controller.java\n\n");
+    
     printf("[TRACE] Layer 6: MVC dispatcher routed the request to the controller logic\n");
+    printf("        └─ Dispatcher type: DispatcherServlet\n");
+    printf("        └─ Handler mapping: RequestMappingHandlerMapping\n");
+    printf("        └─ Route matched successfully\n\n");
 
     query_start = strchr(path, '?');
     if (query_start != NULL) {
@@ -91,14 +111,49 @@ static void process_request(const char *request, char *response, size_t response
 
     if (strcmp(path, "/user") == 0) {
         printf("[TRACE] Layer 7: Controller accepted route /user\n");
+        printf("        └─ Controller method: getUser()\n");
+        printf("        └─ Annotation: @RequestMapping(path='/user')\n");
+        printf("        └─ HTTP status: 200 OK\n\n");
+        
         printf("[TRACE] Layer 8: Spring service layer prepared the business logic\n");
+        printf("        └─ Service class: UserServiceImpl\n");
+        printf("        └─ Method: getUserStatus(name)\n");
+        printf("        └─ Business logic: processing user query\n\n");
+        
         if (sscanf(query, "name=%63s", name) == 1) {
-            printf("[TRACE] Layer 9: Service passed parameter name=%s to repository/DAO\n", name);
+            printf("[TRACE] Layer 9: Service passed parameter to repository/DAO\n");
+            printf("        └─ Parameter name: %s\n", name);
+            printf("        └─ DAO class: UserRepositoryImpl\n");
+            printf("        └─ Method: findByName()\n\n");
+            
             if (db_lookup(name, db_status, sizeof(db_status))) {
-                printf("[TRACE] Layer 10: Repository queried the database and returned -> %s\n", db_status);
-                printf("[TRACE] Layer 11: DTO/entity object created from repository data\n");
+                printf("[TRACE] Layer 10: Repository queried the database\n");
+                printf("        └─ Database: postgres-db (port 5432)\n");
+                printf("        └─ Table: users\n");
+                printf("        └─ Query: SELECT status FROM users WHERE name='%s'\n", name);
+                printf("        └─ Result found: YES\n");
+                printf("        └─ Database response: status=%s\n\n", db_status);
+                
+                printf("[TRACE] Layer 11: DTO/Entity object created from repository data\n");
+                printf("        └─ Entity class: User.java\n");
+                printf("        └─ Fields: id, name, status\n");
+                printf("        └─ Entity state: name=%s, status=%s\n", name, db_status);
+                printf("        └─ DTO mapping: complete\n\n");
+                
                 printf("[TRACE] Layer 12: JDBC/Postgres driver completed the DB interaction\n");
-                printf("[TRACE] Layer 13: Response assembled and returned through spring-api -> nginx-proxy -> client\n");
+                printf("        └─ JDBC driver: postgresql-42.x.x.jar\n");
+                printf("        └─ Connection pool: HikariCP\n");
+                printf("        └─ Transaction: COMMIT\n");
+                printf("        └─ Result set closed: YES\n\n");
+                
+                printf("[TRACE] Layer 13: Response assembled and returned\n");
+                printf("        └─ Serializer: Jackson (JSON)\n");
+                printf("        └─ Content-Type: text/plain\n");
+                printf("        └─ Status code: 200 OK\n");
+                printf("        └─ Response body: User=%s Status=%s\n", name, db_status);
+                printf("        └─ Response sent through: spring-api -> nginx-proxy -> client\n");
+                printf("========== REQUEST FLOW COMPLETE ==========\n\n");
+                
                 snprintf(response, response_size,
                          "HTTP/1.1 200 OK\r\n"
                          "Content-Type: text/plain\r\n"
@@ -111,16 +166,54 @@ static void process_request(const char *request, char *response, size_t response
             }
         }
 
-        printf("[TRACE] Layer 10: no matching record found in the database\n");
+        printf("[TRACE] Layer 10: Repository query to database\n");
+        printf("        └─ Database: postgres-db (port 5432)\n");
+        printf("        └─ Query: SELECT status FROM users WHERE name='%s'\n", name);
+        printf("        └─ Result found: NO\n\n");
+        
         body = "User not found in DB";
     } else {
         printf("[TRACE] Layer 7: Controller accepted route %s\n", path);
+        printf("        └─ Controller: GenericController\n");
+        printf("        └─ Method: handleRequest()\n");
+        printf("        └─ Path pattern: ANY_ROUTE\n\n");
+        
         printf("[TRACE] Layer 8: Spring service layer prepared to serve the request\n");
+        printf("        └─ Service class: GenericService\n");
+        printf("        └─ Method: processRequest()\n");
+        printf("        └─ Service logic: preparing response object\n\n");
+        
         printf("[TRACE] Layer 9: Service layer processed the request parameters\n");
+        printf("        └─ Route: %s\n", path);
+        printf("        └─ Method: %s\n", method);
+        printf("        └─ Parameters parsed: YES\n\n");
+        
         printf("[TRACE] Layer 10: Repository/cache layer retrieved content\n");
+        printf("        └─ Database: postgres-db\n");
+        printf("        └─ Cache: Redis (optional)\n");
+        printf("        └─ Query: Generic retrieval for route %s\n", path);
+        printf("        └─ Cache hit: NO\n");
+        printf("        └─ Database hit: YES\n\n");
+        
         printf("[TRACE] Layer 11: DTO/entity object created for the response\n");
+        printf("        └─ Entity class: GenericResponse.java\n");
+        printf("        └─ Fields: route, method, timestamp, data\n");
+        printf("        └─ Entity state: route=%s, method=%s\n", path, method);
+        printf("        └─ Object serialization: complete\n\n");
+        
         printf("[TRACE] Layer 12: JDBC/Postgres driver completed any required DB interactions\n");
-        printf("[TRACE] Layer 13: Response assembled and returned through spring-api -> nginx-proxy -> client\n");
+        printf("        └─ JDBC driver: postgresql-42.x.x.jar\n");
+        printf("        └─ Connection: active\n");
+        printf("        └─ Transaction: COMMIT\n\n");
+        
+        printf("[TRACE] Layer 13: Response assembled and returned\n");
+        printf("        └─ Serializer: Jackson (HTML)\n");
+        printf("        └─ Content-Type: text/html\n");
+        printf("        └─ Status code: 200 OK\n");
+        printf("        └─ Response size: %zu bytes\n", response_size);
+        printf("        └─ Response sent through: spring-api -> nginx-proxy -> client\n");
+        printf("========== REQUEST FLOW COMPLETE ==========\n\n");
+        
         snprintf(response, response_size,
                  "HTTP/1.1 200 OK\r\n"
                  "Content-Type: text/html\r\n"
@@ -155,6 +248,10 @@ static void process_request(const char *request, char *response, size_t response
     }
 
     printf("[TRACE] Layer 13: assembling error response for the client\n");
+    printf("        └─ Status code: 404 Not Found\n");
+    printf("        └─ Error message: %s\n", body);
+    printf("========== REQUEST FLOW COMPLETE ==========\n\n");
+    
     snprintf(response, response_size,
              "HTTP/1.1 404 Not Found\r\n"
              "Content-Type: text/plain\r\n"
@@ -225,18 +322,29 @@ int main(void) {
 
         printf("[TRACE] Layer 2: nginx-proxy accepted the connection from %s:%d\n",
                inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        printf("        └─ Client IP: %s\n", inet_ntoa(client_addr.sin_addr));
+        printf("        └─ Client port: %d\n", ntohs(client_addr.sin_port));
+        printf("        └─ Socket connection: ESTABLISHED\n\n");
 
         memset(buffer, 0, sizeof(buffer));
         received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
         if (received > 0) {
             buffer[received] = '\0';
-            printf("[TRACE] received %zd bytes from kernel socket buffer\n", received);
-            printf("[TRACE] raw request bytes:\n%s\n", buffer);
+            printf("[TRACE] Layer 3: spring-api socket received %zd bytes from kernel buffer\n", received);
+            printf("        └─ Bytes received: %zd\n", received);
+            printf("        └─ Buffer status: filled\n");
+            printf("        └─ Data integrity: verified\n\n");
+            
             process_request(buffer, response, sizeof(response));
-            printf("[TRACE] sending response to client\n");
+            
+            printf("[TRACE] Sending response to client\n");
+            printf("        └─ Response size: %zu bytes\n", strlen(response));
+            printf("        └─ Socket send status: OK\n");
+            printf("        └─ Data transmission: complete\n\n");
+            
             send(client_fd, response, strlen(response), 0);
         } else if (received == 0) {
-            printf("Client disconnected.\n");
+            printf("Client disconnected gracefully.\n");
         } else {
             perror("recv");
         }

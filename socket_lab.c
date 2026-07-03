@@ -6,7 +6,7 @@
  * Stage 1
  *
  * Compile:
- * gcc socket_lab.c -o socket_lab
+ * gcc socket_lab.c -o socket_lab -lpcap
  *
  * Run:
  * ./socket_lab
@@ -19,8 +19,12 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
-#include <netpacket/packet.h>
+#include <stdint.h>
 #include <sys/socket.h>
+
+#if defined(__linux__)
+#include <netpacket/packet.h>
+#endif
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -31,6 +35,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef __linux__
+struct iphdr {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    unsigned int version : 4;
+    unsigned int ihl : 4;
+#else
+    unsigned int ihl : 4;
+    unsigned int version : 4;
+#endif
+    uint8_t tos;
+    uint16_t tot_len;
+    uint16_t id;
+    uint16_t frag_off;
+    uint8_t ttl;
+    uint8_t protocol;
+    uint16_t check;
+    uint32_t saddr;
+    uint32_t daddr;
+};
+#endif
+
+#if defined(__has_include)
+#  if __has_include(<pcap/pcap.h>)
+#    define HAVE_PCAP 1
+#    include <pcap/pcap.h>
+#  endif
+#endif
+
+#ifndef HAVE_PCAP
+#define HAVE_PCAP 0
+#endif
 
 #define DEFAULT_HOST "studentservices.jntuh.ac.in"
 #define DEFAULT_PORT 80
@@ -427,9 +463,166 @@ void parse_runtime_options(int argc, char *argv[])
     }
 }
 
+void print_mac(const unsigned char *mac);
+
+#if HAVE_PCAP
+static int pcap_snapshot_count = 0;
+
+static void pcap_packet_handler(unsigned char *user,
+                                const struct pcap_pkthdr *header,
+                                const unsigned char *packet)
+{
+    const struct ether_header *eth;
+    const struct iphdr *ip;
+    const struct tcphdr *tcp;
+    int ip_header_len;
+    int tcp_header_len;
+    int payload_len;
+    char src_ip[INET_ADDRSTRLEN];
+    char dst_ip[INET_ADDRSTRLEN];
+    char flags_text[64];
+
+    (void)user;
+
+    if (pcap_snapshot_count >= 6)
+        return;
+
+    if (header->caplen < sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct tcphdr))
+        return;
+
+    eth = (const struct ether_header *)packet;
+    if (ntohs(eth->ether_type) != ETHERTYPE_IP)
+        return;
+
+    ip = (const struct iphdr *)(packet + sizeof(struct ether_header));
+    ip_header_len = ip->ihl * 4;
+
+    if (ip->protocol != IPPROTO_TCP)
+        return;
+
+    if (header->caplen < sizeof(struct ether_header) + ip_header_len + sizeof(struct tcphdr))
+        return;
+
+    tcp = (const struct tcphdr *)(packet + sizeof(struct ether_header) + ip_header_len);
+    tcp_header_len = tcp->doff * 4;
+    payload_len = header->caplen - sizeof(struct ether_header) - ip_header_len - tcp_header_len;
+    if (payload_len < 0)
+        payload_len = 0;
+
+    inet_ntop(AF_INET, &ip->saddr, src_ip, sizeof(src_ip));
+    inet_ntop(AF_INET, &ip->daddr, dst_ip, sizeof(dst_ip));
+    format_tcp_flags(*((const unsigned char *)tcp + 13), flags_text, sizeof(flags_text));
+
+    if (packet_detail_mode)
+    {
+        printf("Frame %d\n", pcap_snapshot_count + 1);
+        printf("  Ethernet: ");
+        print_mac((const unsigned char *)eth->ether_shost);
+        printf(" -> ");
+        print_mac((const unsigned char *)eth->ether_dhost);
+        printf("  type=0x%04X\n", ntohs(eth->ether_type));
+
+        printf("  IPv4    : %s -> %s  ihl=%d ttl=%d total_len=%d\n",
+               src_ip,
+               dst_ip,
+               ip_header_len,
+               ip->ttl,
+               ntohs(ip->tot_len));
+
+        printf("  TCP     : %u -> %u  seq=%u ack=%u flags=%s",
+               ntohs(tcp->source),
+               ntohs(tcp->dest),
+               ntohl(tcp->seq),
+               ntohl(tcp->ack_seq),
+               flags_text);
+        printf(" win=%u payload=%d\n\n",
+               ntohs(tcp->window),
+               payload_len > 0 ? payload_len : 0);
+    }
+    else
+    {
+        printf("%-5d %-5s %-21s %-21s %-8u %-8u %-18s %-8u %-8d\n",
+               pcap_snapshot_count + 1,
+               "C->S",
+               src_ip,
+               dst_ip,
+               ntohs(tcp->source),
+               ntohs(tcp->dest),
+               flags_text,
+               ntohs(tcp->window),
+               payload_len > 0 ? payload_len : 0);
+    }
+
+    pcap_snapshot_count++;
+}
+#endif
+
 void show_packet_headers_snapshot()
 {
     char cmd[1024];
+
+#if HAVE_PCAP
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_t *handle;
+    struct bpf_program filter;
+    char filter_expr[256];
+
+    pcap_snapshot_count = 0;
+
+    printf("\nPacket header snapshot (Ethernet/IP/TCP)\n");
+    printf("This uses libpcap directly from C at the link/IP/TCP layers.\n");
+
+    handle = pcap_open_live("any", 65535, 1, 1000, errbuf);
+    if (handle != NULL)
+    {
+        if (resolved_ip[0] != '\0')
+            snprintf(filter_expr, sizeof(filter_expr),
+                     "tcp and host %s and port %d",
+                     resolved_ip,
+                     server_port);
+        else
+            snprintf(filter_expr, sizeof(filter_expr),
+                     "tcp and port %d",
+                     server_port);
+
+        if (pcap_compile(handle, &filter, filter_expr, 0, PCAP_NETMASK_UNKNOWN) == 0 &&
+            pcap_setfilter(handle, &filter) == 0)
+        {
+            printf("Filter: %s\n", filter_expr);
+            if (!packet_detail_mode)
+            {
+                printf("%-5s %-5s %-21s %-21s %-8s %-8s %-18s %-8s %-8s\n",
+                       "No",
+                       "Dir",
+                       "Src",
+                       "Dst",
+                       "SPort",
+                       "DPort",
+                       "Flags",
+                       "Win",
+                       "Payload");
+                printf("-----------------------------------------------------------------------------------------------\n");
+            }
+
+            pcap_dispatch(handle, 6, pcap_packet_handler, NULL);
+            if (pcap_snapshot_count == 0)
+                printf("No matching packets captured with libpcap.\n");
+
+            pcap_freecode(&filter);
+        }
+        else
+        {
+            fprintf(stderr, "pcap filter failed: %s\n", pcap_geterr(handle));
+        }
+
+        pcap_close(handle);
+        return;
+    }
+
+    fprintf(stderr, "libpcap capture unavailable: %s\n", errbuf);
+#else
+    char cmd[1024];
+#endif
 
     sprintf(cmd,
             "sudo timeout 4 tcpdump -i any -nn -e -vvv -c 6 'host %s and tcp port %d'",
@@ -526,6 +719,7 @@ int flow_direction(const struct iphdr *ip,
 
 void capture_raw_headers_for_flow(int tcp_fd)
 {
+#if defined(__linux__) && defined(AF_PACKET)
     struct sockaddr_in local_addr;
     struct sockaddr_in peer_addr;
     socklen_t addr_len = sizeof(struct sockaddr_in);
@@ -707,6 +901,11 @@ void capture_raw_headers_for_flow(int tcp_fd)
     }
 
     close(raw_fd);
+#else
+    (void)tcp_fd;
+    printf("Raw AF_PACKET decode is not available on this platform.\n");
+    printf("The libpcap-based snapshot above is the portable C path here.\n");
+#endif
 }
 
 int configure_recv_timeout(int fd, int timeout_seconds)

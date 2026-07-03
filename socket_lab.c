@@ -39,6 +39,7 @@ struct sockaddr_in server_addr;
 char resolved_ip[INET_ADDRSTRLEN];
 int packet_detail_mode = 0;
 char host_name[256] = DEFAULT_HOST;
+char request_path[512] = "/oss/login.html";
 int server_port = DEFAULT_PORT;
 int save_output_enabled = 0;
 char output_file_path[512] = "";
@@ -286,6 +287,30 @@ void parse_runtime_options(int argc, char *argv[])
 
             server_port = (int)p;
         }
+        else if (strcmp(argv[i], "--path") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                printf("Missing value for --path\n");
+                exit(EXIT_FAILURE);
+            }
+
+            i++;
+
+            if (argv[i][0] != '/')
+            {
+                printf("Invalid path. Path must start with '/'.\n");
+                exit(EXIT_FAILURE);
+            }
+
+            if (strlen(argv[i]) >= sizeof(request_path))
+            {
+                printf("Path is too long (max %zu chars)\n", sizeof(request_path) - 1);
+                exit(EXIT_FAILURE);
+            }
+
+            strcpy(request_path, argv[i]);
+        }
         else if (strcmp(argv[i], "--save-output") == 0)
         {
             if (i + 1 >= argc)
@@ -312,6 +337,7 @@ void parse_runtime_options(int argc, char *argv[])
             printf("  --packet-detail    Show multi-line verbose packet decode\n");
             printf("  --host NAME        Target hostname (default: %s)\n", DEFAULT_HOST);
             printf("  --port N           Target TCP port (default: %d)\n", DEFAULT_PORT);
+            printf("  --path PATH        Request path (default: %s)\n", "/oss/login.html");
             printf("  --save-output FILE Save full stage output to FILE while running\n");
             exit(EXIT_SUCCESS);
         }
@@ -1089,13 +1115,14 @@ void build_http_request()
 
     sprintf(http_request,
 
-        "GET /oss/login.html HTTP/1.1\r\n"
+        "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: Socket-Lab/1.0\r\n"
         "Accept: */*\r\n"
         "Connection: keep-alive\r\n"
         "\r\n",
 
+        request_path,
         host_name);
 
     printf("HTTP Request\n\n");

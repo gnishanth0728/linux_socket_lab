@@ -97,7 +97,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
     char *newline;
 
     snprintf(cmd, sizeof(cmd),
-             "command -v geoiplookup >/dev/null 2>&1 && geoiplookup %s 2>/dev/null | head -n1",
+             "timeout 2 geoiplookup %s 2>/dev/null | grep -oE '[A-Z]{2}$'",
              ip);
     fp = popen(cmd, "r");
     if (fp != NULL)
@@ -107,27 +107,41 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
             newline = strchr(buf, '\n');
             if (newline)
                 *newline = '\0';
-
-            char *colon = strchr(buf, ':');
-            if (colon)
+            if (*buf)
             {
-                char *value = colon + 1;
-                while (*value && isspace((unsigned char)*value))
-                    value++;
-                if (*value)
-                {
-                    strncpy(country, value, country_size);
-                    country[country_size - 1] = '\0';
-                    pclose(fp);
-                    return 1;
-                }
+                strncpy(country, buf, country_size);
+                country[country_size - 1] = '\0';
+                pclose(fp);
+                return 1;
             }
         }
         pclose(fp);
     }
 
     snprintf(cmd, sizeof(cmd),
-             "command -v curl >/dev/null 2>&1 && curl -s --fail https://ipinfo.io/%s/country 2>/dev/null",
+             "timeout 3 curl -s https://ipinfo.io/%s/country 2>/dev/null",
+             ip);
+    fp = popen(cmd, "r");
+    if (fp != NULL)
+    {
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+        {
+            newline = strchr(buf, '\n');
+            if (newline)
+                *newline = '\0';
+            if (*buf && strlen(buf) <= 3)
+            {
+                strncpy(country, buf, country_size);
+                country[country_size - 1] = '\0';
+                pclose(fp);
+                return 1;
+            }
+        }
+        pclose(fp);
+    }
+
+    snprintf(cmd, sizeof(cmd),
+             "timeout 2 whois -h whois.arin.net %s 2>/dev/null | grep -i 'country:' | head -1 | cut -d: -f2 | xargs",
              ip);
     fp = popen(cmd, "r");
     if (fp != NULL)

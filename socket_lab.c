@@ -345,6 +345,60 @@ void format_tcp_flags(unsigned char flags, char *out, size_t out_size)
         out[used - 1] = '\0';
 }
 
+static uint16_t tcp_src_port(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return ntohs(tcp->th_sport);
+#else
+    return ntohs(tcp->source);
+#endif
+}
+
+static uint16_t tcp_dst_port(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return ntohs(tcp->th_dport);
+#else
+    return ntohs(tcp->dest);
+#endif
+}
+
+static uint32_t tcp_seq_num(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return ntohl(tcp->th_seq);
+#else
+    return ntohl(tcp->seq);
+#endif
+}
+
+static uint32_t tcp_ack_num(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return ntohl(tcp->th_ack);
+#else
+    return ntohl(tcp->ack_seq);
+#endif
+}
+
+static int tcp_header_len_bytes(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return (int)(tcp->th_off * 4);
+#else
+    return (int)(tcp->doff * 4);
+#endif
+}
+
+static uint16_t tcp_window_size(const struct tcphdr *tcp)
+{
+#if defined(__APPLE__)
+    return ntohs(tcp->th_win);
+#else
+    return ntohs(tcp->window);
+#endif
+}
+
 void parse_runtime_options(int argc, char *argv[])
 {
     int i;
@@ -504,7 +558,7 @@ static void pcap_packet_handler(unsigned char *user,
         return;
 
     tcp = (const struct tcphdr *)(packet + sizeof(struct ether_header) + ip_header_len);
-    tcp_header_len = tcp->doff * 4;
+    tcp_header_len = tcp_header_len_bytes(tcp);
     payload_len = header->caplen - sizeof(struct ether_header) - ip_header_len - tcp_header_len;
     if (payload_len < 0)
         payload_len = 0;
@@ -530,13 +584,13 @@ static void pcap_packet_handler(unsigned char *user,
                ntohs(ip->tot_len));
 
         printf("  TCP     : %u -> %u  seq=%u ack=%u flags=%s",
-               ntohs(tcp->source),
-               ntohs(tcp->dest),
-               ntohl(tcp->seq),
-               ntohl(tcp->ack_seq),
+               tcp_src_port(tcp),
+               tcp_dst_port(tcp),
+               tcp_seq_num(tcp),
+               tcp_ack_num(tcp),
                flags_text);
         printf(" win=%u payload=%d\n\n",
-               ntohs(tcp->window),
+               tcp_window_size(tcp),
                payload_len > 0 ? payload_len : 0);
     }
     else
@@ -546,10 +600,10 @@ static void pcap_packet_handler(unsigned char *user,
                "C->S",
                src_ip,
                dst_ip,
-               ntohs(tcp->source),
-               ntohs(tcp->dest),
+               tcp_src_port(tcp),
+               tcp_dst_port(tcp),
                flags_text,
-               ntohs(tcp->window),
+               tcp_window_size(tcp),
                payload_len > 0 ? payload_len : 0);
     }
 
@@ -674,8 +728,8 @@ int belongs_to_flow(const struct iphdr *ip,
 {
     unsigned int src_ip = ip->saddr;
     unsigned int dst_ip = ip->daddr;
-    unsigned short src_port = ntohs(tcp->source);
-    unsigned short dst_port = ntohs(tcp->dest);
+    unsigned short src_port = tcp_src_port(tcp);
+    unsigned short dst_port = tcp_dst_port(tcp);
 
     int c2s = (src_ip == local_ip &&
                dst_ip == remote_ip &&
@@ -699,8 +753,8 @@ int flow_direction(const struct iphdr *ip,
 {
     unsigned int src_ip = ip->saddr;
     unsigned int dst_ip = ip->daddr;
-    unsigned short src_port = ntohs(tcp->source);
-    unsigned short dst_port = ntohs(tcp->dest);
+    unsigned short src_port = tcp_src_port(tcp);
+    unsigned short dst_port = tcp_dst_port(tcp);
 
     if (src_ip == local_ip &&
         dst_ip == remote_ip &&
@@ -843,10 +897,10 @@ void capture_raw_headers_for_flow(int tcp_fd)
         if (direction == 0)
             continue;
 
-        int tcp_header_len = tcp->doff * 4;
+        int tcp_header_len = tcp_header_len_bytes(tcp);
         int payload_len = n - (int)sizeof(struct ether_header) - ip_header_len - tcp_header_len;
-        unsigned int seq = ntohl(tcp->seq);
-        unsigned int ack = ntohl(tcp->ack_seq);
+        unsigned int seq = tcp_seq_num(tcp);
+        unsigned int ack = tcp_ack_num(tcp);
         unsigned char flags = *(((unsigned char *)tcp) + 13);
          char src_ip[INET_ADDRSTRLEN];
          char dst_ip[INET_ADDRSTRLEN];
@@ -874,13 +928,13 @@ void capture_raw_headers_for_flow(int tcp_fd)
                  ntohs(ip->tot_len));
 
              printf("  TCP     : %u -> %u  seq=%u ack=%u flags=%s",
-                 ntohs(tcp->source),
-                 ntohs(tcp->dest),
+                 tcp_src_port(tcp),
+                 tcp_dst_port(tcp),
                  seq,
                  ack,
                  flags_text);
              printf(" win=%u payload=%d\n\n",
-                 ntohs(tcp->window),
+                 tcp_window_size(tcp),
                  payload_len > 0 ? payload_len : 0);
          }
          else
@@ -890,10 +944,10 @@ void capture_raw_headers_for_flow(int tcp_fd)
                  direction > 0 ? "C->S" : "S->C",
                  src_ip,
                  dst_ip,
-                 ntohs(tcp->source),
-                 ntohs(tcp->dest),
+                 tcp_src_port(tcp),
+                 tcp_dst_port(tcp),
                  flags_text,
-                 ntohs(tcp->window),
+                 tcp_window_size(tcp),
                  payload_len > 0 ? payload_len : 0);
          }
 

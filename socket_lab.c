@@ -675,7 +675,6 @@ void show_packet_headers_snapshot()
 
     fprintf(stderr, "libpcap capture unavailable: %s\n", errbuf);
 #else
-    char cmd[1024];
 #endif
 
     sprintf(cmd,

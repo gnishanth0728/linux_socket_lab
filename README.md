@@ -41,6 +41,18 @@ Show command help:
 ./socket_lab --help
 ```
 
+Save full stage output to a file (written during run and complete after close stage):
+
+```bash
+./socket_lab --save-output stage-output.log
+```
+
+Use with custom host/port and packet mode:
+
+```bash
+./socket_lab --host example.com --port 80 --packet-detail --save-output stage-output.log
+```
+
 ## Important Permission Note
 
 The lab includes AF_PACKET raw socket decoding of Ethernet/IP/TCP headers.
@@ -76,6 +88,7 @@ Current runtime options:
 - `--port N` target TCP port (1-65535)
 - `--packet-compact` compact one-line packet table
 - `--packet-detail` verbose packet decode
+- `--save-output FILE` save full stage output transcript
 - `--help` usage information
 
 ## Suggested External Observability Commands

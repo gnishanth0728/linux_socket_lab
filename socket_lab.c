@@ -13,6 +13,7 @@
  */
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <net/ethernet.h>
 #include <netinet/in.h>
@@ -22,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <ctype.h>
@@ -38,6 +40,11 @@ char resolved_ip[INET_ADDRSTRLEN];
 int packet_detail_mode = 0;
 char host_name[256] = DEFAULT_HOST;
 int server_port = DEFAULT_PORT;
+int save_output_enabled = 0;
+char output_file_path[512] = "";
+int saved_stdout_fd = -1;
+int saved_stderr_fd = -1;
+pid_t output_tee_pid = -1;
 
 /*---------------------------------------------------------*/
 /* Helper Functions                                        */
@@ -66,6 +73,97 @@ void banner(const char *title)
     line();
     printf("%s\n", title);
     line();
+}
+
+int start_output_tee(const char *path)
+{
+    int pipefd[2];
+    pid_t pid;
+
+    if (pipe(pipefd) < 0)
+        return -1;
+
+    saved_stdout_fd = dup(STDOUT_FILENO);
+    saved_stderr_fd = dup(STDERR_FILENO);
+
+    if (saved_stdout_fd < 0 || saved_stderr_fd < 0)
+    {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+
+    pid = fork();
+
+    if (pid < 0)
+    {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+
+    if (pid == 0)
+    {
+        int log_fd;
+        char buffer[4096];
+        ssize_t n;
+
+        close(pipefd[1]);
+
+        log_fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        if (log_fd < 0)
+            _exit(1);
+
+        while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0)
+        {
+            write(STDOUT_FILENO, buffer, (size_t)n);
+            write(log_fd, buffer, (size_t)n);
+        }
+
+        close(log_fd);
+        close(pipefd[0]);
+        _exit(0);
+    }
+
+    close(pipefd[0]);
+
+    if (dup2(pipefd[1], STDOUT_FILENO) < 0 || dup2(pipefd[1], STDERR_FILENO) < 0)
+    {
+        close(pipefd[1]);
+        return -1;
+    }
+
+    close(pipefd[1]);
+    output_tee_pid = pid;
+    return 0;
+}
+
+void stop_output_tee()
+{
+    int status;
+
+    fflush(stdout);
+    fflush(stderr);
+
+    if (saved_stdout_fd >= 0)
+    {
+        dup2(saved_stdout_fd, STDOUT_FILENO);
+        close(saved_stdout_fd);
+        saved_stdout_fd = -1;
+    }
+
+    if (saved_stderr_fd >= 0)
+    {
+        dup2(saved_stderr_fd, STDERR_FILENO);
+        close(saved_stderr_fd);
+        saved_stderr_fd = -1;
+    }
+
+    if (output_tee_pid > 0)
+    {
+        waitpid(output_tee_pid, &status, 0);
+        output_tee_pid = -1;
+    }
 }
 
 void format_tcp_flags(unsigned char flags, char *out, size_t out_size)
@@ -161,13 +259,33 @@ void parse_runtime_options(int argc, char *argv[])
 
             server_port = (int)p;
         }
+        else if (strcmp(argv[i], "--save-output") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                printf("Missing value for --save-output\n");
+                exit(EXIT_FAILURE);
+            }
+
+            i++;
+
+            if (strlen(argv[i]) >= sizeof(output_file_path))
+            {
+                printf("Output file path too long (max %zu chars)\n", sizeof(output_file_path) - 1);
+                exit(EXIT_FAILURE);
+            }
+
+            strcpy(output_file_path, argv[i]);
+            save_output_enabled = 1;
+        }
         else if (strcmp(argv[i], "--help") == 0)
         {
-            printf("Usage: ./socket_lab [--packet-compact | --packet-detail] [--host NAME] [--port N]\n\n");
+            printf("Usage: ./socket_lab [--packet-compact | --packet-detail] [--host NAME] [--port N] [--save-output FILE]\n\n");
             printf("  --packet-compact   Show one-line packet summary table (default)\n");
             printf("  --packet-detail    Show multi-line verbose packet decode\n");
             printf("  --host NAME        Target hostname (default: %s)\n", DEFAULT_HOST);
             printf("  --port N           Target TCP port (default: %d)\n", DEFAULT_PORT);
+            printf("  --save-output FILE Save full stage output to FILE while running\n");
             exit(EXIT_SUCCESS);
         }
     }
@@ -1248,6 +1366,17 @@ int main(int argc, char *argv[])
 {
     parse_runtime_options(argc, argv);
 
+    if (save_output_enabled)
+    {
+        if (start_output_tee(output_file_path) < 0)
+        {
+            perror("start_output_tee");
+            exit(EXIT_FAILURE);
+        }
+
+        printf("Saving full stage output to: %s\n", output_file_path);
+    }
+
     banner("Linux Networking Lab");
 
     printf("PID = %d\n", getpid());
@@ -1317,6 +1446,12 @@ int main(int argc, char *argv[])
     printf("Application Buffer\n");
     printf("      |\n");
     printf("close()\n");
+
+    if (save_output_enabled)
+    {
+        stop_output_tee();
+        printf("\nSaved full stage output to: %s\n", output_file_path);
+    }
 
     return 0;
 }

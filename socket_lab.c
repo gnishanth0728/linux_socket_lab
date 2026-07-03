@@ -14,20 +14,30 @@
 
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <net/ethernet.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netpacket/packet.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define HOST "studentservices.jntuh.ac.in"
-#define PORT 80
+#define DEFAULT_HOST "studentservices.jntuh.ac.in"
+#define DEFAULT_PORT 80
 
 struct sockaddr_in server_addr;
 char resolved_ip[INET_ADDRSTRLEN];
+int packet_detail_mode = 0;
+char host_name[256] = DEFAULT_HOST;
+int server_port = DEFAULT_PORT;
 
 /*---------------------------------------------------------*/
 /* Helper Functions                                        */
@@ -56,6 +66,513 @@ void banner(const char *title)
     line();
     printf("%s\n", title);
     line();
+}
+
+void format_tcp_flags(unsigned char flags, char *out, size_t out_size)
+{
+    size_t used = 0;
+    out[0] = '\0';
+
+    if (flags & TH_SYN)
+        used += snprintf(out + used, out_size - used, "SYN,");
+    if (flags & TH_ACK)
+        used += snprintf(out + used, out_size - used, "ACK,");
+    if (flags & TH_FIN)
+        used += snprintf(out + used, out_size - used, "FIN,");
+    if (flags & TH_RST)
+        used += snprintf(out + used, out_size - used, "RST,");
+    if (flags & TH_PUSH)
+        used += snprintf(out + used, out_size - used, "PSH,");
+    if (flags & TH_URG)
+        used += snprintf(out + used, out_size - used, "URG,");
+    if (flags & 0x40)
+        used += snprintf(out + used, out_size - used, "ECE,");
+    if (flags & 0x80)
+        used += snprintf(out + used, out_size - used, "CWR,");
+
+    if (used == 0)
+    {
+        snprintf(out, out_size, "NONE");
+        return;
+    }
+
+    if (out[used - 1] == ',')
+        out[used - 1] = '\0';
+}
+
+void parse_runtime_options(int argc, char *argv[])
+{
+    int i;
+
+    for (i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "--packet-detail") == 0)
+            packet_detail_mode = 1;
+        else if (strcmp(argv[i], "--packet-compact") == 0)
+            packet_detail_mode = 0;
+        else if (strcmp(argv[i], "--host") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                printf("Missing value for --host\n");
+                exit(EXIT_FAILURE);
+            }
+
+            i++;
+
+            if (strlen(argv[i]) >= sizeof(host_name))
+            {
+                printf("Host is too long (max %zu chars)\n", sizeof(host_name) - 1);
+                exit(EXIT_FAILURE);
+            }
+
+            size_t j;
+            for (j = 0; argv[i][j] != '\0'; j++)
+            {
+                unsigned char c = (unsigned char)argv[i][j];
+                if (!(isalnum(c) || c == '.' || c == '-'))
+                {
+                    printf("Invalid host value. Allowed chars: a-z A-Z 0-9 . -\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
+
+            strcpy(host_name, argv[i]);
+        }
+        else if (strcmp(argv[i], "--port") == 0)
+        {
+            char *endptr = NULL;
+            long p;
+
+            if (i + 1 >= argc)
+            {
+                printf("Missing value for --port\n");
+                exit(EXIT_FAILURE);
+            }
+
+            i++;
+            p = strtol(argv[i], &endptr, 10);
+
+            if (*argv[i] == '\0' || *endptr != '\0' || p < 1 || p > 65535)
+            {
+                printf("Invalid port. Use a number between 1 and 65535\n");
+                exit(EXIT_FAILURE);
+            }
+
+            server_port = (int)p;
+        }
+        else if (strcmp(argv[i], "--help") == 0)
+        {
+            printf("Usage: ./socket_lab [--packet-compact | --packet-detail] [--host NAME] [--port N]\n\n");
+            printf("  --packet-compact   Show one-line packet summary table (default)\n");
+            printf("  --packet-detail    Show multi-line verbose packet decode\n");
+            printf("  --host NAME        Target hostname (default: %s)\n", DEFAULT_HOST);
+            printf("  --port N           Target TCP port (default: %d)\n", DEFAULT_PORT);
+            exit(EXIT_SUCCESS);
+        }
+    }
+}
+
+void show_packet_headers_snapshot()
+{
+    char cmd[1024];
+
+    sprintf(cmd,
+            "sudo timeout 4 tcpdump -i any -nn -e -vvv -c 6 'host %s and tcp port %d'",
+            host_name,
+            server_port);
+
+    printf("\nPacket header snapshot (Ethernet/IP/TCP)\n");
+    printf("This uses tcpdump because recv() on SOCK_STREAM returns payload only.\n");
+    run_command(cmd);
+}
+
+void print_mac(const unsigned char *mac)
+{
+    printf("%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0],
+           mac[1],
+           mac[2],
+           mac[3],
+           mac[4],
+           mac[5]);
+}
+
+void print_tcp_flags(unsigned char flags)
+{
+    if (flags & 0x02)
+        printf("SYN ");
+    if (flags & 0x10)
+        printf("ACK ");
+    if (flags & 0x01)
+        printf("FIN ");
+    if (flags & 0x04)
+        printf("RST ");
+    if (flags & 0x08)
+        printf("PSH ");
+    if (flags & 0x20)
+        printf("URG ");
+    if (flags & 0x40)
+        printf("ECE ");
+    if (flags & 0x80)
+        printf("CWR ");
+}
+
+int belongs_to_flow(const struct iphdr *ip,
+                    const struct tcphdr *tcp,
+                    unsigned int local_ip,
+                    unsigned int remote_ip,
+                    unsigned short local_port,
+                    unsigned short remote_port)
+{
+    unsigned int src_ip = ip->saddr;
+    unsigned int dst_ip = ip->daddr;
+    unsigned short src_port = ntohs(tcp->source);
+    unsigned short dst_port = ntohs(tcp->dest);
+
+    int c2s = (src_ip == local_ip &&
+               dst_ip == remote_ip &&
+               src_port == local_port &&
+               dst_port == remote_port);
+
+    int s2c = (src_ip == remote_ip &&
+               dst_ip == local_ip &&
+               src_port == remote_port &&
+               dst_port == local_port);
+
+    return c2s || s2c;
+}
+
+int flow_direction(const struct iphdr *ip,
+                   const struct tcphdr *tcp,
+                   unsigned int local_ip,
+                   unsigned int remote_ip,
+                   unsigned short local_port,
+                   unsigned short remote_port)
+{
+    unsigned int src_ip = ip->saddr;
+    unsigned int dst_ip = ip->daddr;
+    unsigned short src_port = ntohs(tcp->source);
+    unsigned short dst_port = ntohs(tcp->dest);
+
+    if (src_ip == local_ip &&
+        dst_ip == remote_ip &&
+        src_port == local_port &&
+        dst_port == remote_port)
+        return 1;
+
+    if (src_ip == remote_ip &&
+        dst_ip == local_ip &&
+        src_port == remote_port &&
+        dst_port == local_port)
+        return -1;
+
+    return 0;
+}
+
+void capture_raw_headers_for_flow(int tcp_fd)
+{
+    struct sockaddr_in local_addr;
+    struct sockaddr_in peer_addr;
+    socklen_t addr_len = sizeof(struct sockaddr_in);
+    int raw_fd;
+    struct timeval tv;
+    unsigned char frame[65536];
+    int shown = 0;
+
+    memset(&local_addr, 0, sizeof(local_addr));
+    memset(&peer_addr, 0, sizeof(peer_addr));
+
+    if (getsockname(tcp_fd, (struct sockaddr *)&local_addr, &addr_len) < 0)
+    {
+        perror("getsockname");
+        return;
+    }
+
+    addr_len = sizeof(struct sockaddr_in);
+
+    if (getpeername(tcp_fd, (struct sockaddr *)&peer_addr, &addr_len) < 0)
+    {
+        perror("getpeername");
+        return;
+    }
+
+    raw_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_IP));
+
+    if (raw_fd < 0)
+    {
+        perror("socket(AF_PACKET)");
+        printf("Run as root (or grant CAP_NET_RAW) to decode L2/L3/L4 headers in code.\n");
+        return;
+    }
+
+    tv.tv_sec = 4;
+    tv.tv_usec = 0;
+
+    if (setsockopt(raw_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        perror("setsockopt SO_RCVTIMEO raw");
+        close(raw_fd);
+        return;
+    }
+
+    line();
+    printf("\nRaw Socket Decode (AF_PACKET)\n\n");
+    printf("Local  : %s:%d\n",
+           inet_ntoa(local_addr.sin_addr),
+           ntohs(local_addr.sin_port));
+    printf("Remote : %s:%d\n\n",
+           inet_ntoa(peer_addr.sin_addr),
+           ntohs(peer_addr.sin_port));
+
+    printf("Capturing up to 6 matching frames...\n\n");
+
+    if (!packet_detail_mode)
+    {
+        printf("%-5s %-5s %-21s %-21s %-8s %-8s %-18s %-8s %-8s\n",
+               "No",
+               "Dir",
+               "Src",
+               "Dst",
+               "SPort",
+               "DPort",
+               "Flags",
+               "Win",
+               "Payload");
+        printf("-----------------------------------------------------------------------------------------------\n");
+    }
+
+    while (shown < 6)
+    {
+        int n = recvfrom(raw_fd,
+                         frame,
+                         sizeof(frame),
+                         0,
+                         NULL,
+                         NULL);
+
+        if (n < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                printf("Raw capture timeout reached.\n");
+                break;
+            }
+
+            if (errno == EINTR)
+                continue;
+
+            perror("recvfrom raw");
+            break;
+        }
+
+        if (n < (int)(sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct tcphdr)))
+            continue;
+
+        struct ether_header *eth = (struct ether_header *)frame;
+
+        if (ntohs(eth->ether_type) != ETH_P_IP)
+            continue;
+
+        struct iphdr *ip = (struct iphdr *)(frame + sizeof(struct ether_header));
+        int ip_header_len = ip->ihl * 4;
+
+        if (ip->protocol != IPPROTO_TCP)
+            continue;
+
+        if (n < (int)(sizeof(struct ether_header) + ip_header_len + sizeof(struct tcphdr)))
+            continue;
+
+        struct tcphdr *tcp = (struct tcphdr *)(frame + sizeof(struct ether_header) + ip_header_len);
+
+        int direction = flow_direction(ip,
+                           tcp,
+                           local_addr.sin_addr.s_addr,
+                           peer_addr.sin_addr.s_addr,
+                           ntohs(local_addr.sin_port),
+                           ntohs(peer_addr.sin_port));
+
+        if (direction == 0)
+            continue;
+
+        int tcp_header_len = tcp->doff * 4;
+        int payload_len = n - (int)sizeof(struct ether_header) - ip_header_len - tcp_header_len;
+        unsigned int seq = ntohl(tcp->seq);
+        unsigned int ack = ntohl(tcp->ack_seq);
+        unsigned char flags = *(((unsigned char *)tcp) + 13);
+         char src_ip[INET_ADDRSTRLEN];
+         char dst_ip[INET_ADDRSTRLEN];
+         char flags_text[64];
+
+         inet_ntop(AF_INET, &ip->saddr, src_ip, sizeof(src_ip));
+         inet_ntop(AF_INET, &ip->daddr, dst_ip, sizeof(dst_ip));
+         format_tcp_flags(flags, flags_text, sizeof(flags_text));
+
+         if (packet_detail_mode)
+         {
+             printf("Frame %d\n", shown + 1);
+
+             printf("  Ethernet: ");
+             print_mac((unsigned char *)eth->ether_shost);
+             printf(" -> ");
+             print_mac((unsigned char *)eth->ether_dhost);
+             printf("  type=0x%04X\n", ntohs(eth->ether_type));
+
+             printf("  IPv4    : %s -> %s  ihl=%d ttl=%d total_len=%d\n",
+                 src_ip,
+                 dst_ip,
+                 ip_header_len,
+                 ip->ttl,
+                 ntohs(ip->tot_len));
+
+             printf("  TCP     : %u -> %u  seq=%u ack=%u flags=%s",
+                 ntohs(tcp->source),
+                 ntohs(tcp->dest),
+                 seq,
+                 ack,
+                 flags_text);
+             printf(" win=%u payload=%d\n\n",
+                 ntohs(tcp->window),
+                 payload_len > 0 ? payload_len : 0);
+         }
+         else
+         {
+             printf("%-5d %-5s %-21s %-21s %-8u %-8u %-18s %-8u %-8d\n",
+                 shown + 1,
+                 direction > 0 ? "C->S" : "S->C",
+                 src_ip,
+                 dst_ip,
+                 ntohs(tcp->source),
+                 ntohs(tcp->dest),
+                 flags_text,
+                 ntohs(tcp->window),
+                 payload_len > 0 ? payload_len : 0);
+         }
+
+        shown++;
+    }
+
+    close(raw_fd);
+}
+
+int configure_recv_timeout(int fd, int timeout_seconds)
+{
+    struct timeval tv;
+
+    tv.tv_sec = timeout_seconds;
+    tv.tv_usec = 0;
+
+    return setsockopt(fd,
+                      SOL_SOCKET,
+                      SO_RCVTIMEO,
+                      &tv,
+                      sizeof(tv));
+}
+
+int send_all(int fd, const char *data, size_t len)
+{
+    size_t sent_total = 0;
+
+    while (sent_total < len)
+    {
+        int sent = send(fd,
+                        data + sent_total,
+                        len - sent_total,
+                        0);
+
+        if (sent < 0)
+        {
+            if (errno == EINTR)
+                continue;
+
+            return -1;
+        }
+
+        if (sent == 0)
+            break;
+
+        sent_total += (size_t)sent;
+    }
+
+    return (sent_total == len) ? 0 : -1;
+}
+
+void analyze_http_response(const char *buffer, size_t total)
+{
+    const char *status_end = strstr(buffer, "\r\n");
+    const char *headers_end = strstr(buffer, "\r\n\r\n");
+
+    line();
+    printf("\nHTTP Framing Analysis\n\n");
+
+    if (status_end != NULL)
+        printf("Status Line   : %.*s\n",
+               (int)(status_end - buffer),
+               buffer);
+    else
+        printf("Status Line   : Not found\n");
+
+    if (headers_end != NULL)
+    {
+        size_t header_bytes = (size_t)(headers_end - buffer) + 4;
+        size_t body_bytes = (total > header_bytes) ? (total - header_bytes) : 0;
+
+        printf("Header Bytes  : %zu\n", header_bytes);
+        printf("Body Bytes    : %zu\n", body_bytes);
+    }
+    else
+    {
+        printf("Header Bytes  : Could not detect header terminator\n");
+        printf("Body Bytes    : Unknown\n");
+    }
+}
+
+int parse_content_length(const char *headers, size_t headers_len, size_t *out_len)
+{
+    const char *key = "Content-Length:";
+    const char *found = strstr(headers, key);
+
+    if (found == NULL)
+        return 0;
+
+    if ((size_t)(found - headers) >= headers_len)
+        return 0;
+
+    found += strlen(key);
+
+    while (*found == ' ' || *found == '\t')
+        found++;
+
+    char *endptr = NULL;
+    unsigned long long value = strtoull(found, &endptr, 10);
+
+    if (endptr == found)
+        return 0;
+
+    *out_len = (size_t)value;
+    return 1;
+}
+
+int is_chunked_transfer(const char *headers)
+{
+    const char *key = "Transfer-Encoding:";
+    const char *found = strstr(headers, key);
+
+    if (found == NULL)
+        return 0;
+
+    return strstr(found, "chunked") != NULL;
+}
+
+int chunked_body_complete(const char *body)
+{
+    if (strncmp(body, "0\r\n\r\n", 5) == 0)
+        return 1;
+
+    if (strstr(body, "\r\n0\r\n\r\n") != NULL)
+        return 1;
+
+    return 0;
 }
 
 /*---------------------------------------------------------*/
@@ -197,7 +714,7 @@ void instructions()
     printf("sudo watch -n 1 'ss -tanpi'\n\n");
 
     printf("2. Watch packets\n\n");
-    printf("sudo tcpdump -i any -nn host %s\n\n", HOST);
+    printf("sudo tcpdump -i any -nn host %s\n\n", host_name);
 
     printf("3. Watch file descriptors\n\n");
     printf("watch -n 1 'ls -l /proc/%d/fd'\n\n", getpid());
@@ -285,7 +802,7 @@ void resolve_dns()
 {
     banner("Stage 3 : DNS Resolution");
 
-    struct hostent *host = gethostbyname(HOST);
+    struct hostent *host = gethostbyname(host_name);
 
     if (host == NULL)
     {
@@ -298,13 +815,13 @@ void resolve_dns()
               resolved_ip,
               sizeof(resolved_ip));
 
-    printf("Hostname : %s\n", HOST);
+    printf("Hostname : %s\n", host_name);
     printf("Resolved IP : %s\n\n", resolved_ip);
 
     memset(&server_addr,0,sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
+    server_addr.sin_port = htons(server_port);
 
     memcpy(&server_addr.sin_addr,
            host->h_addr_list[0],
@@ -349,7 +866,14 @@ void connect_socket(int fd)
         exit(EXIT_FAILURE);
     }
 
+    if (configure_recv_timeout(fd, 5) < 0)
+    {
+        perror("setsockopt SO_RCVTIMEO");
+        exit(EXIT_FAILURE);
+    }
+
     printf("TCP Connection Established.\n");
+    printf("Receive timeout set to 5 seconds.\n");
 
     line();
 
@@ -358,7 +882,7 @@ void connect_socket(int fd)
     printf("Source IP        : Assigned automatically\n");
     printf("Source Port      : Ephemeral Port\n");
     printf("Destination IP   : %s\n", resolved_ip);
-    printf("Destination Port : %d\n", PORT);
+    printf("Destination Port : %d\n", server_port);
 
     line();
 
@@ -398,7 +922,7 @@ void build_http_request()
         "Connection: keep-alive\r\n"
         "\r\n",
 
-        HOST);
+        host_name);
 
     printf("HTTP Request\n\n");
 
@@ -442,18 +966,17 @@ void send_request(int fd)
 
     printf("Calling send()...\n\n");
 
-    int bytes = send(fd,
-                     http_request,
-                     strlen(http_request),
-                     0);
+    size_t req_len = strlen(http_request);
 
-    if(bytes < 0)
+    if(send_all(fd,
+                http_request,
+                req_len) < 0)
     {
         perror("send");
         exit(EXIT_FAILURE);
     }
 
-    printf("Bytes Sent = %d\n", bytes);
+    printf("Bytes Sent = %zu\n", req_len);
 
     line();
 
@@ -480,6 +1003,13 @@ void send_request(int fd)
     printf("      |\n");
     printf("Waiting for transmission...\n");
 
+    printf("\nNow capturing live packet headers for a few packets...\n");
+    printf("You should see Ethernet, IP and TCP fields below.\n");
+    show_packet_headers_snapshot();
+
+    printf("\nNow decoding those headers directly in C using AF_PACKET...\n");
+    capture_raw_headers_for_flow(fd);
+
     wait_enter();
 }
 
@@ -491,24 +1021,128 @@ void receive_response(int fd)
 {
     banner("Stage 7 : recv()");
 
-    char buffer[8192];
+    char chunk[4096];
+    size_t total = 0;
+    size_t capacity = 16384;
+    char *buffer = malloc(capacity);
+    int response_complete = 0;
+    int used_timeout = 0;
+    int has_content_length = 0;
+    int uses_chunked = 0;
+    size_t content_length = 0;
 
-    memset(buffer,0,sizeof(buffer));
-
-    printf("Waiting for HTTP Response...\n\n");
-
-    int bytes = recv(fd,
-                     buffer,
-                     sizeof(buffer)-1,
-                     0);
-
-    if(bytes < 0)
+    if (buffer == NULL)
     {
-        perror("recv");
+        perror("malloc");
         exit(EXIT_FAILURE);
     }
 
-    printf("Bytes Received = %d\n\n", bytes);
+    printf("Waiting for HTTP Response...\n\n");
+
+    while (1)
+    {
+        int bytes = recv(fd,
+                         chunk,
+                         sizeof(chunk),
+                         0);
+
+        if (bytes < 0)
+        {
+            if (errno == EINTR)
+                continue;
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                printf("Receive timeout reached; stopping read loop.\n");
+                used_timeout = 1;
+                break;
+            }
+
+            perror("recv");
+            free(buffer);
+            exit(EXIT_FAILURE);
+        }
+
+        if (bytes == 0)
+            break;
+
+        printf("Received chunk = %d bytes\n", bytes);
+
+        if (total + (size_t)bytes + 1 > capacity)
+        {
+            while (total + (size_t)bytes + 1 > capacity)
+                capacity *= 2;
+
+            char *new_buffer = realloc(buffer, capacity);
+
+            if (new_buffer == NULL)
+            {
+                perror("realloc");
+                free(buffer);
+                exit(EXIT_FAILURE);
+            }
+
+            buffer = new_buffer;
+        }
+
+        memcpy(buffer + total, chunk, (size_t)bytes);
+        total += (size_t)bytes;
+        buffer[total] = '\0';
+
+        if (!response_complete)
+        {
+            char *headers_end = strstr(buffer, "\r\n\r\n");
+
+            if (headers_end != NULL)
+            {
+                size_t header_bytes = (size_t)(headers_end - buffer) + 4;
+                char *body = buffer + header_bytes;
+                size_t body_bytes = (total > header_bytes) ? (total - header_bytes) : 0;
+
+                if (!has_content_length)
+                    has_content_length = parse_content_length(buffer,
+                                                              header_bytes,
+                                                              &content_length);
+
+                if (!uses_chunked)
+                    uses_chunked = is_chunked_transfer(buffer);
+
+                if (has_content_length && body_bytes >= content_length)
+                {
+                    response_complete = 1;
+                    printf("Response complete via Content-Length framing.\n");
+                    break;
+                }
+
+                if (uses_chunked && chunked_body_complete(body))
+                {
+                    response_complete = 1;
+                    printf("Response complete via chunked terminator.\n");
+                    break;
+                }
+            }
+        }
+    }
+
+    buffer[total] = '\0';
+
+    printf("Bytes Received = %zu\n\n", total);
+
+    line();
+    printf("\nImportant\n\n");
+    printf("recv() on a normal TCP socket does not return Ethernet/IP/TCP headers.\n");
+    printf("Linux strips those headers in the kernel before data reaches this buffer.\n");
+    printf("To view wire-level headers, use tcpdump/raw sockets/AF_PACKET.\n");
+
+    if (!response_complete)
+    {
+        if (used_timeout)
+            printf("Read loop ended due to timeout fallback.\n\n");
+        else
+            printf("Read loop ended because peer closed the connection.\n\n");
+    }
+
+    analyze_http_response(buffer, total);
 
     line();
 
@@ -521,13 +1155,13 @@ void receive_response(int fd)
 
     printf("\nHTTP Response\n\n");
 
-    printf("%s\n",buffer);
+    printf("%s\n", buffer);
 
     line();
 
     printf("\nHex Dump\n");
 
-    hexdump((unsigned char *)buffer,bytes);
+    hexdump((unsigned char *)buffer, (int)total);
 
     line();
 
@@ -555,6 +1189,8 @@ void receive_response(int fd)
     printf(" |\n");
     printf(" v\n");
     printf("Application Buffer\n");
+
+    free(buffer);
 
     wait_enter();
 }
@@ -608,11 +1244,17 @@ void close_socket(int fd)
 /* Main                                                     */
 /*---------------------------------------------------------*/
 
-int main()
+int main(int argc, char *argv[])
 {
+    parse_runtime_options(argc, argv);
+
     banner("Linux Networking Lab");
 
     printf("PID = %d\n", getpid());
+    printf("Packet Decode Mode = %s\n",
+           packet_detail_mode ? "Detailed" : "Compact");
+    printf("Target Host = %s\n", host_name);
+    printf("Target Port = %d\n", server_port);
 
     instructions();
 

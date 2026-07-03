@@ -58,8 +58,22 @@ void line()
 
 void wait_enter()
 {
+    char input[32];
+
+    if (!isatty(STDIN_FILENO))
+        return;
+
     printf("\nPress ENTER to continue...");
-    getchar();
+    fflush(stdout);
+
+    if (fgets(input, sizeof(input), stdin) == NULL)
+        return;
+
+    while (strchr(input, '\n') == NULL)
+    {
+        if (fgets(input, sizeof(input), stdin) == NULL)
+            break;
+    }
 }
 
 void run_command(const char *cmd)

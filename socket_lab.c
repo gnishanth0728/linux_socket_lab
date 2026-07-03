@@ -993,15 +993,19 @@ void show_traceroute()
     char line_copy[1024];
     char country[256];
     FILE *fp;
+    char *token;
+    char first_ip[64];
+    float first_rtt = 0;
+    int resp_count = 0;
 
     banner("Stage 3.5 : Traceroute Path");
 
-    printf("Tracing route to %s ...\n\n", host_name);
-    printf("This shows each hop between your machine and the server.\n");
-    printf("When available, each hop IP will also show country/location info.\n\n");
+    printf("Clean traceroute table: first responding IP per hop\n\n");
+    printf("%-5s %-18s %-10s %-8s %-5s\n", "Hop", "IP Address", "RTT(ms)", "Country", "Resp");
+    printf("%-5s %-18s %-10s %-8s %-5s\n", "---", "----------", "-------", "-------", "----");
 
     sprintf(cmd,
-            "(traceroute -n %s || tracepath -n %s)",
+            "(traceroute -n %s || tracepath -n %s) 2>&1",
             host_name,
             host_name);
 
@@ -1009,44 +1013,72 @@ void show_traceroute()
     if (fp == NULL)
     {
         perror("popen traceroute");
-        run_command(cmd);
+        return;
     }
-    else
+
+    while (fgets(line_buf, sizeof(line_buf), fp) != NULL)
     {
-        while (fgets(line_buf, sizeof(line_buf), fp) != NULL)
+        strncpy(line_copy, line_buf, sizeof(line_copy) - 1);
+        line_copy[sizeof(line_copy) - 1] = '\0';
+
+        token = strtok(line_copy, " \t");
+        if (token == NULL || !isdigit((unsigned char)token[0]))
+            continue;
+
+        char hop_num[8];
+        strncpy(hop_num, token, sizeof(hop_num) - 1);
+        hop_num[sizeof(hop_num) - 1] = '\0';
+
+        first_ip[0] = '\0';
+        first_rtt = 0;
+        resp_count = 0;
+
+        while ((token = strtok(NULL, " \t")) != NULL)
         {
-            printf("%s", line_buf);
-            strncpy(line_copy, line_buf, sizeof(line_copy));
-            line_copy[sizeof(line_copy) - 1] = '\0';
-
-            char *token = strtok(line_copy, " \t\r\n");
-            if (token == NULL)
+            if (*token == '*')
                 continue;
-
-            if (!isdigit((unsigned char)token[0]))
-                continue;
-
-            while ((token = strtok(NULL, " \t\r\n")) != NULL)
+            else if (is_ipv4_address(token))
             {
-                if (is_ipv4_address(token))
+                if (first_ip[0] == '\0')
+                    strncpy(first_ip, token, sizeof(first_ip) - 1);
+            }
+            else if (strchr(token, 'm') && strchr(token, '.'))
+            {
+                if (first_rtt == 0)
                 {
-                    if (lookup_ip_country(token, country, sizeof(country)))
-                    {
-                        printf(" [%s]", country);
-                    }
-                    else
-                    {
-                        printf(" [--]");
-                    }
-                    break;
+                    char rtt_copy[32];
+                    strncpy(rtt_copy, token, sizeof(rtt_copy) - 1);
+                    rtt_copy[strlen(rtt_copy) - 2] = '\0';
+                    first_rtt = atof(rtt_copy);
                 }
+                resp_count++;
             }
         }
-        pclose(fp);
+
+        if (first_ip[0] != '\0')
+        {
+            printf("%-5s %-18s ", hop_num, first_ip);
+            if (first_rtt > 0)
+                printf("%-10.2f ", first_rtt);
+            else
+                printf("%-10s ", "--");
+
+            if (lookup_ip_country(first_ip, country, sizeof(country)))
+                printf("%-8s ", country);
+            else
+                printf("%-8s ", "--");
+
+            printf("%d/3\n", resp_count);
+        }
+        else
+        {
+            printf("%-5s %-18s %-10s %-8s %-5s\n", hop_num, "*", "*", "*", "0/3");
+        }
     }
+    pclose(fp);
 
     line();
-    printf("\nTraceroute output above is now part of this lab session output.\n");
+    printf("\nTraceroute complete. Output is part of this lab session.\n");
 
     wait_enter();
 }

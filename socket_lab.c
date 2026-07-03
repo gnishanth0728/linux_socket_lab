@@ -26,6 +26,9 @@
 #define HOST "studentservices.jntuh.ac.in"
 #define PORT 80
 
+struct sockaddr_in server_addr;
+char resolved_ip[INET_ADDRSTRLEN];
+
 /*---------------------------------------------------------*/
 /* Helper Functions                                        */
 /*---------------------------------------------------------*/
@@ -275,6 +278,106 @@ void inspect_socket(int fd)
 }
 
 /*---------------------------------------------------------*/
+/* DNS Resolution                                           */
+/*---------------------------------------------------------*/
+
+void resolve_dns()
+{
+    banner("Stage 3 : DNS Resolution");
+
+    struct hostent *host = gethostbyname(HOST);
+
+    if (host == NULL)
+    {
+        perror("gethostbyname");
+        exit(EXIT_FAILURE);
+    }
+
+    inet_ntop(AF_INET,
+              host->h_addr_list[0],
+              resolved_ip,
+              sizeof(resolved_ip));
+
+    printf("Hostname : %s\n", HOST);
+    printf("Resolved IP : %s\n\n", resolved_ip);
+
+    memset(&server_addr,0,sizeof(server_addr));
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+
+    memcpy(&server_addr.sin_addr,
+           host->h_addr_list[0],
+           host->h_length);
+
+    printf("Destination Socket Address Prepared\n");
+
+    line();
+
+    printf("\nCurrent Flow\n\n");
+
+    printf("Application\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("DNS Resolver\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("%s\n", resolved_ip);
+
+    line();
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
+/* Connect                                                  */
+/*---------------------------------------------------------*/
+
+void connect_socket(int fd)
+{
+    banner("Stage 4 : connect()");
+
+    printf("Calling connect() ...\n\n");
+
+    int rc = connect(fd,
+                     (struct sockaddr *)&server_addr,
+                     sizeof(server_addr));
+
+    if(rc < 0)
+    {
+        perror("connect");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("TCP Connection Established.\n");
+
+    line();
+
+    printf("\nKernel now knows:\n\n");
+
+    printf("Source IP        : Assigned automatically\n");
+    printf("Source Port      : Ephemeral Port\n");
+    printf("Destination IP   : %s\n", resolved_ip);
+    printf("Destination Port : %d\n", PORT);
+
+    line();
+
+    show_process();
+
+    show_fd_table();
+
+    show_fdinfo(fd);
+
+    show_lsof();
+
+    show_ss();
+
+    printf("\nConnection should now appear as ESTABLISHED.\n");
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
 /* Main                                                     */
 /*---------------------------------------------------------*/
 
@@ -292,8 +395,12 @@ int main()
 
     inspect_socket(sockfd);
 
-    printf("\nNext Stage:\n");
-    printf("DNS Resolution\n");
+    resolve_dns();
+
+    connect_socket(sockfd);
+
+    printf("\nNext Stage\n");
+    printf("Construct HTTP Request\n");
 
     close(sockfd);
 

@@ -83,6 +83,74 @@ void run_command(const char *cmd)
     system(cmd);
 }
 
+int is_ipv4_address(const char *token)
+{
+    struct in_addr addr;
+    return inet_pton(AF_INET, token, &addr) == 1;
+}
+
+int lookup_ip_country(const char *ip, char *country, size_t country_size)
+{
+    char cmd[512];
+    char buf[512];
+    FILE *fp;
+    char *newline;
+
+    snprintf(cmd, sizeof(cmd),
+             "command -v geoiplookup >/dev/null 2>&1 && geoiplookup %s 2>/dev/null | head -n1",
+             ip);
+    fp = popen(cmd, "r");
+    if (fp != NULL)
+    {
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+        {
+            newline = strchr(buf, '\n');
+            if (newline)
+                *newline = '\0';
+
+            char *colon = strchr(buf, ':');
+            if (colon)
+            {
+                char *value = colon + 1;
+                while (*value && isspace((unsigned char)*value))
+                    value++;
+                if (*value)
+                {
+                    strncpy(country, value, country_size);
+                    country[country_size - 1] = '\0';
+                    pclose(fp);
+                    return 1;
+                }
+            }
+        }
+        pclose(fp);
+    }
+
+    snprintf(cmd, sizeof(cmd),
+             "command -v curl >/dev/null 2>&1 && curl -s --fail https://ipinfo.io/%s/country 2>/dev/null",
+             ip);
+    fp = popen(cmd, "r");
+    if (fp != NULL)
+    {
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+        {
+            newline = strchr(buf, '\n');
+            if (newline)
+                *newline = '\0';
+            if (*buf)
+            {
+                strncpy(country, buf, country_size);
+                country[country_size - 1] = '\0';
+                pclose(fp);
+                return 1;
+            }
+        }
+        pclose(fp);
+    }
+
+    return 0;
+}
+
 void banner(const char *title)
 {
     printf("\n\n");
@@ -906,18 +974,57 @@ void instructions()
 void show_traceroute()
 {
     char cmd[1024];
+    char line_buf[1024];
+    char line_copy[1024];
+    char country[256];
+    FILE *fp;
 
     banner("Stage 3.5 : Traceroute Path");
 
     printf("Tracing route to %s ...\n\n", host_name);
-    printf("This shows each hop between your machine and the server.\n\n");
+    printf("This shows each hop between your machine and the server.\n");
+    printf("When available, each hop IP will also show country/location info.\n\n");
 
     sprintf(cmd,
             "(traceroute -n %s || tracepath -n %s)",
             host_name,
             host_name);
 
-    run_command(cmd);
+    fp = popen(cmd, "r");
+    if (fp == NULL)
+    {
+        perror("popen traceroute");
+        run_command(cmd);
+    }
+    else
+    {
+        while (fgets(line_buf, sizeof(line_buf), fp) != NULL)
+        {
+            printf("%s", line_buf);
+            strncpy(line_copy, line_buf, sizeof(line_copy));
+            line_copy[sizeof(line_copy) - 1] = '\0';
+
+            char *token = strtok(line_copy, " \t\r\n");
+            if (token == NULL)
+                continue;
+
+            if (!isdigit((unsigned char)token[0]))
+                continue;
+
+            while ((token = strtok(NULL, " \t\r\n")) != NULL)
+            {
+                if (is_ipv4_address(token))
+                {
+                    if (lookup_ip_country(token, country, sizeof(country)))
+                    {
+                        printf("    Location/Country: %s\n", country);
+                    }
+                    break;
+                }
+            }
+        }
+        pclose(fp);
+    }
 
     line();
     printf("\nTraceroute output above is now part of this lab session output.\n");

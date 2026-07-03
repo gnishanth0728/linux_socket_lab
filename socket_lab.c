@@ -1029,9 +1029,15 @@ void show_traceroute()
             {
                 if (is_ipv4_address(token))
                 {
+                    printf("    [Lookup IP: %s] ", token);
+                    fflush(stdout);
                     if (lookup_ip_country(token, country, sizeof(country)))
                     {
-                        printf("    Location/Country: %s\n", country);
+                        printf("Country: %s\n", country);
+                    }
+                    else
+                    {
+                        printf("(no country data)\n");
                     }
                     break;
                 }

@@ -33,51 +33,195 @@ struct UserRecord {
     const char *status;
 };
 
+struct HttpHeader {
+    char name[64];
+    char value[256];
+};
+
+struct HttpRequest {
+    char method[16];
+    char path[256];
+    char protocol[16];
+    struct HttpHeader headers[16];
+    int header_count;
+    char body[1024];
+};
+
+struct ResultSetRow {
+    char column[32];
+    char value[128];
+};
+
+struct ResultSet {
+    struct ResultSetRow rows[8];
+    int row_count;
+};
+
+struct UserEntity {
+    char name[64];
+    char status[32];
+};
+
+struct UserResponseDto {
+    char name[64];
+    char status[32];
+};
+
 static const struct UserRecord db_rows[] = {
     {"alice", "active"},
     {"bob", "inactive"},
 };
 
-static int db_lookup(const char *name, char *status_out, size_t status_size) {
-    size_t i;
-    for (i = 0; i < sizeof(db_rows) / sizeof(db_rows[0]); ++i) {
+static int parse_http_request(const char *raw, struct HttpRequest *req) {
+    const char *line = raw;
+    const char *next;
+    char header_line[512];
+
+    memset(req, 0, sizeof(*req));
+
+    next = strstr(line, "\r\n");
+    if (next == NULL)
+        next = strstr(line, "\n");
+    if (next == NULL)
+        return 0;
+
+    size_t request_line_len = (size_t)(next - line);
+    if (request_line_len >= sizeof(header_line))
+        return 0;
+
+    memcpy(header_line, line, request_line_len);
+    header_line[request_line_len] = '\0';
+    if (sscanf(header_line, "%15s %255s %15s",
+               req->method, req->path, req->protocol) != 3)
+        return 0;
+
+    line = next;
+    if (*line == '\r' && line[1] == '\n')
+        line += 2;
+    else if (*line == '\n')
+        line += 1;
+
+    while (*line != '\0' && !(line[0] == '\r' && line[1] == '\n') && *line != '\n') {
+        const char *end = strstr(line, "\r\n");
+        if (end == NULL)
+            end = strstr(line, "\n");
+        if (end == NULL)
+            break;
+
+        size_t len = (size_t)(end - line);
+        if (len >= sizeof(header_line))
+            return 0;
+
+        memcpy(header_line, line, len);
+        header_line[len] = '\0';
+
+        char *colon = strchr(header_line, ':');
+        if (colon != NULL && req->header_count < (int)(sizeof(req->headers) / sizeof(req->headers[0]))) {
+            *colon = '\0';
+            char *name = header_line;
+            char *value = colon + 1;
+            while (*value == ' ') value++;
+            strncpy(req->headers[req->header_count].name, name, sizeof(req->headers[req->header_count].name) - 1);
+            strncpy(req->headers[req->header_count].value, value, sizeof(req->headers[req->header_count].value) - 1);
+            req->header_count++;
+        }
+
+        if (*end == '\r' && end[1] == '\n')
+            line = end + 2;
+        else
+            line = end + 1;
+    }
+
+    if (*line == '\r' && line[1] == '\n')
+        line += 2;
+    else if (*line == '\n')
+        line += 1;
+
+    if (*line != '\0') {
+        strncpy(req->body, line, sizeof(req->body) - 1);
+    }
+
+    return 1;
+}
+
+static int extract_query_param(const char *query, const char *key, char *value, size_t value_size) {
+    const char *start = strstr(query, key);
+    if (start == NULL)
+        return 0;
+
+    start += strlen(key);
+    if (*start != '=')
+        return 0;
+    start++;
+
+    const char *end = strchr(start, '&');
+    size_t len = end ? (size_t)(end - start) : strlen(start);
+    if (len >= value_size)
+        len = value_size - 1;
+    memcpy(value, start, len);
+    value[len] = '\0';
+    return 1;
+}
+
+static void resultset_from_user(const char *name, struct ResultSet *rs) {
+    rs->row_count = 0;
+    for (size_t i = 0; i < sizeof(db_rows) / sizeof(db_rows[0]); ++i) {
         if (strcmp(db_rows[i].name, name) == 0) {
-            snprintf(status_out, status_size, "%s", db_rows[i].status);
-            return 1;
+            rs->row_count = 1;
+            strncpy(rs->rows[0].column, "status", sizeof(rs->rows[0].column) - 1);
+            strncpy(rs->rows[0].value, db_rows[i].status, sizeof(rs->rows[0].value) - 1);
+            return;
         }
     }
-    return 0;
+}
+
+static void entity_from_resultset(const struct ResultSet *rs, struct UserEntity *entity, const char *name) {
+    strncpy(entity->name, name, sizeof(entity->name) - 1);
+    if (rs->row_count > 0) {
+        strncpy(entity->status, rs->rows[0].value, sizeof(entity->status) - 1);
+    } else {
+        strcpy(entity->status, "not-found");
+    }
+}
+
+static void dto_from_entity(const struct UserEntity *entity, struct UserResponseDto *dto) {
+    strncpy(dto->name, entity->name, sizeof(dto->name) - 1);
+    strncpy(dto->status, entity->status, sizeof(dto->status) - 1);
+}
+
+static void serialize_json(const struct UserResponseDto *dto, char *out, size_t out_size) {
+    snprintf(out, out_size,
+             "{\"name\":\"%s\",\"status\":\"%s\"}",
+             dto->name,
+             dto->status);
 }
 
 static void process_request(const char *request, char *response, size_t response_size) {
-    char method[16] = {0};
-    char path[256] = {0};
+    struct HttpRequest http_request;
+    struct ResultSet result_set;
+    struct UserEntity user_entity;
+    struct UserResponseDto user_dto;
+    char request_path[256] = {0};
     char query[256] = {0};
     char name[64] = {0};
-    char db_status[32] = "not-found";
-    char *query_start = NULL;
-    const char *body = "";
+    char response_body[2048] = {0};
 
     printf("\n========== REQUEST FLOW STARTING ==========\n");
     printf("[TRACE] Layer 1: React frontend/client sent an HTTP request\n");
-    printf("        └─ Request initiated from client\n\n");
+    printf("        └─ TCP packet available in kernel receive buffer\n\n");
 
     printf("[TRACE] Layer 2: nginx-proxy received the request and passed it to the app stack\n");
-    printf("        └─ nginx-proxy listening on port 80\n");
-    printf("        └─ Forwarding to spring-api backend\n\n");
+    printf("        └─ nginx accepted socket connection and forwarded request data\n\n");
 
     printf("[TRACE] Layer 3: spring-api socket received the TCP payload from the kernel stack\n");
-    printf("        └─ Socket descriptor: active\n");
-    printf("        └─ TCP payload size: %zu bytes\n", strlen(request));
-    printf("        └─ Kernel socket buffer: filled\n\n");
+    printf("        └─ Socket read returned %zu bytes\n", strlen(request));
+    printf("        └─ Stream buffer assembled from TCP segments\n\n");
 
     printf("[TRACE] Layer 4: HTTP parser extracted bytes\n");
-    printf("        └─ Raw request:\n");
-    printf("           %s\n", request);
-
-    if (sscanf(request, "%15s %255s", method, path) != 2) {
-        printf("[TRACE] Layer 4: parse failure, returning 400\n");
-        printf("        └─ HTTP parse error detected\n\n");
+    printf("        └─ Raw request bytes:\n%s\n", request);
+    if (!parse_http_request(request, &http_request)) {
+        printf("[TRACE] Layer 4: request parsing failed\n");
+        printf("        └─ Invalid HTTP request structure\n\n");
         snprintf(response, response_size,
                  "HTTP/1.1 400 Bad Request\r\n"
                  "Content-Type: text/plain\r\n"
@@ -86,178 +230,149 @@ static void process_request(const char *request, char *response, size_t response
         return;
     }
 
+    printf("[TRACE] Layer 4: HTTP request object built\n");
+    printf("        └─ Method: %s\n", http_request.method);
+    printf("        └─ Path: %s\n", http_request.path);
+    printf("        └─ Protocol: %s\n", http_request.protocol);
+    for (int i = 0; i < http_request.header_count; ++i) {
+        printf("        └─ Header: %s = %s\n",
+               http_request.headers[i].name,
+               http_request.headers[i].value);
+    }
+    if (http_request.header_count == 0) {
+        printf("        └─ Headers: none\n");
+    }
+    if (http_request.body[0] != '\0') {
+        printf("        └─ Body: %s\n", http_request.body);
+    }
+    printf("\n");
+
     printf("[TRACE] Layer 5: Spring controller received request\n");
-    printf("        └─ HTTP Method: %s\n", method);
-    printf("        └─ Request Path: %s\n", path);
-    printf("        └─ Controller: user-controller.java\n\n");
+    printf("        └─ Controller: student-controller.java\n\n");
 
     printf("[TRACE] Layer 6: MVC dispatcher routed the request to the controller logic\n");
-    printf("        └─ Dispatcher type: DispatcherServlet\n");
-    printf("        └─ Handler mapping: RequestMappingHandlerMapping\n");
-    printf("        └─ Route matched successfully\n\n");
+    printf("        └─ DispatcherServlet created request/response wrappers\n");
+    printf("        └─ HandlerMapping found controller method\n\n");
 
-    query_start = strchr(path, '?');
+    strncpy(request_path, http_request.path, sizeof(request_path) - 1);
+    request_path[sizeof(request_path) - 1] = '\0';
+    char *query_start = strchr(request_path, '?');
     if (query_start != NULL) {
-        size_t path_len = (size_t)(query_start - path);
-        if (path_len > 0 && path_len < sizeof(path)) {
-            memcpy(query, query_start + 1, sizeof(query) - 1);
-            query[sizeof(query) - 1] = '\0';
-        }
-        if (path_len < sizeof(path)) {
-            memcpy(path, path, path_len);
-            path[path_len] = '\0';
-        }
+        *query_start = '\0';
+        size_t query_len = strlen(query_start + 1);
+        if (query_len >= sizeof(query))
+            query_len = sizeof(query) - 1;
+        memcpy(query, query_start + 1, query_len);
+        query[query_len] = '\0';
     }
 
-    if (strcmp(path, "/user") == 0) {
+    if (strcmp(request_path, "/user") == 0) {
         printf("[TRACE] Layer 7: Controller accepted route /user\n");
-        printf("        └─ Controller method: getUser()\n");
-        printf("        └─ Annotation: @RequestMapping(path='/user')\n");
-        printf("        └─ HTTP status: 200 OK\n\n");
+        printf("        └─ Controller method: getUser()\n\n");
 
         printf("[TRACE] Layer 8: Spring service layer prepared the business logic\n");
-        printf("        └─ Service class: UserServiceImpl\n");
-        printf("        └─ Method: getUserStatus(name)\n");
-        printf("        └─ Business logic: processing user query\n\n");
+        printf("        └─ Service: StudentService\n");
+        printf("        └─ Method: findStudentByName()\n\n");
 
-        if (sscanf(query, "name=%63s", name) == 1) {
+        if (extract_query_param(query, "name", name, sizeof(name))) {
             printf("[TRACE] Layer 9: Service passed parameter to repository/DAO\n");
-            printf("        └─ Parameter name: %s\n", name);
-            printf("        └─ DAO class: UserRepositoryImpl\n");
-            printf("        └─ Method: findByName()\n\n");
+            printf("        └─ name=%s\n", name);
+            printf("        └─ Repository: StudentRepository\n");
+            printf("        └─ Query shape: SELECT status FROM users WHERE name=?\n\n");
 
-            if (db_lookup(name, db_status, sizeof(db_status))) {
+            resultset_from_user(name, &result_set);
+            if (result_set.row_count > 0) {
                 printf("[TRACE] Layer 10: Repository queried the database\n");
-                printf("        └─ Database: postgres-db (port 5432)\n");
-                printf("        └─ Table: users\n");
-                printf("        └─ Query: SELECT status FROM users WHERE name='%s'\n", name);
-                printf("        └─ Result found: YES\n");
-                printf("        └─ Database response: status=%s\n\n", db_status);
+                printf("        └─ SQL executed: SELECT status FROM users WHERE name='%s'\n", name);
+                printf("        └─ PostgreSQL returned %d row(s)\n", result_set.row_count);
+                printf("        └─ ResultSet: %s=%s\n\n",
+                       result_set.rows[0].column,
+                       result_set.rows[0].value);
 
-                printf("[TRACE] Layer 11: DTO/Entity object created from repository data\n");
-                printf("        └─ Entity class: User.java\n");
-                printf("        └─ Fields: id, name, status\n");
-                printf("        └─ Entity state: name=%s, status=%s\n", name, db_status);
-                printf("        └─ DTO mapping: complete\n\n");
+                entity_from_resultset(&result_set, &user_entity, name);
+                printf("[TRACE] Layer 11: Hibernate entity populated\n");
+                printf("        └─ Entity class: StudentEntity\n");
+                printf("        └─ Entity values: name=%s, status=%s\n\n",
+                       user_entity.name,
+                       user_entity.status);
 
-                printf("[TRACE] Layer 12: JDBC/Postgres driver completed the DB interaction\n");
-                printf("        └─ JDBC driver: postgresql-42.x.x.jar\n");
-                printf("        └─ Connection pool: HikariCP\n");
-                printf("        └─ Transaction: COMMIT\n");
-                printf("        └─ Result set closed: YES\n\n");
+                dto_from_entity(&user_entity, &user_dto);
+                printf("[TRACE] Layer 12: DTO created from entity\n");
+                printf("        └─ DTO class: StudentResponseDto\n");
+                printf("        └─ DTO values: name=%s, status=%s\n\n",
+                       user_dto.name,
+                       user_dto.status);
 
-                printf("[TRACE] Layer 13: Response assembled and returned\n");
-                printf("        └─ Serializer: Jackson (JSON)\n");
-                printf("        └─ Content-Type: text/plain\n");
-                printf("        └─ Status code: 200 OK\n");
-                printf("        └─ Response body: User=%s Status=%s\n", name, db_status);
-                printf("        └─ Response sent through: spring-api -> nginx-proxy -> client\n");
-                printf("========== REQUEST FLOW COMPLETE ==========\n\n");
+                serialize_json(&user_dto, response_body, sizeof(response_body));
+                printf("[TRACE] Layer 13: HTTP response created\n");
+                printf("        └─ Serializer: Jackson-style JSON\n");
+                printf("        └─ Response body: %s\n\n", response_body);
 
                 snprintf(response, response_size,
                          "HTTP/1.1 200 OK\r\n"
-                         "Content-Type: text/plain\r\n"
+                         "Content-Type: application/json\r\n"
                          "Connection: close\r\n\r\n"
-                         "Trace: React frontend -> nginx-proxy -> spring-api -> controller -> "
-                         "service -> repository -> DTO/entity -> postgres-db -> response.\n"
-                         "User=%s Status=%s",
-                         name, db_status);
+                         "%s",
+                         response_body);
                 return;
             }
+
+            printf("[TRACE] Layer 10: Repository returned no rows\n");
+            printf("        └─ SQL executed: SELECT status FROM users WHERE name='%s'\n", name);
+            printf("        └─ PostgreSQL returned 0 rows\n\n");
+        } else {
+            printf("[TRACE] Layer 9: missing query parameter 'name'\n\n");
         }
 
-        printf("[TRACE] Layer 10: Repository query to database\n");
-        printf("        └─ Database: postgres-db (port 5432)\n");
-        printf("        └─ Query: SELECT status FROM users WHERE name='%s'\n", name);
-        printf("        └─ Result found: NO\n\n");
-
-        body = "User not found in DB";
-    } else {
-        printf("[TRACE] Layer 7: Controller accepted route %s\n", path);
-        printf("        └─ Controller: GenericController\n");
-        printf("        └─ Method: handleRequest()\n");
-        printf("        └─ Path pattern: ANY_ROUTE\n\n");
-
-        printf("[TRACE] Layer 8: Spring service layer prepared to serve the request\n");
-        printf("        └─ Service class: GenericService\n");
-        printf("        └─ Method: processRequest()\n");
-        printf("        └─ Service logic: preparing response object\n\n");
-
-        printf("[TRACE] Layer 9: Service layer processed the request parameters\n");
-        printf("        └─ Route: %s\n", path);
-        printf("        └─ Method: %s\n", method);
-        printf("        └─ Parameters parsed: YES\n\n");
-
-        printf("[TRACE] Layer 10: Repository/cache layer retrieved content\n");
-        printf("        └─ Database: postgres-db\n");
-        printf("        └─ Cache: Redis (optional)\n");
-        printf("        └─ Query: Generic retrieval for route %s\n", path);
-        printf("        └─ Cache hit: NO\n");
-        printf("        └─ Database hit: YES\n\n");
-
-        printf("[TRACE] Layer 11: DTO/entity object created for the response\n");
-        printf("        └─ Entity class: GenericResponse.java\n");
-        printf("        └─ Fields: route, method, timestamp, data\n");
-        printf("        └─ Entity state: route=%s, method=%s\n", path, method);
-        printf("        └─ Object serialization: complete\n\n");
-
-        printf("[TRACE] Layer 12: JDBC/Postgres driver completed any required DB interactions\n");
-        printf("        └─ JDBC driver: postgresql-42.x.x.jar\n");
-        printf("        └─ Connection: active\n");
-        printf("        └─ Transaction: COMMIT\n\n");
-
-        printf("[TRACE] Layer 13: Response assembled and returned\n");
-        printf("        └─ Serializer: Jackson (HTML)\n");
-        printf("        └─ Content-Type: text/html\n");
-        printf("        └─ Status code: 200 OK\n");
-        printf("        └─ Response size: %zu bytes\n", response_size);
-        printf("        └─ Response sent through: spring-api -> nginx-proxy -> client\n");
-        printf("========== REQUEST FLOW COMPLETE ==========\n\n");
-
         snprintf(response, response_size,
-                 "HTTP/1.1 200 OK\r\n"
-                 "Content-Type: text/html\r\n"
+                 "HTTP/1.1 404 Not Found\r\n"
+                 "Content-Type: text/plain\r\n"
                  "Connection: close\r\n\r\n"
-                 "<!DOCTYPE html>\n"
-                 "<html>\n"
-                 "<head><title>Response</title></head>\n"
-                 "<body>\n"
-                 "<h1>Request received and processed</h1>\n"
-                 "<p><strong>Route:</strong> %s</p>\n"
-                 "<p><strong>Method:</strong> %s</p>\n"
-                 "<p>This request was traced through all layers:</p>\n"
-                 "<ul>\n"
-                 "<li>Layer 1: React frontend sent request</li>\n"
-                 "<li>Layer 2: nginx-proxy received connection</li>\n"
-                 "<li>Layer 3: spring-api socket received payload</li>\n"
-                 "<li>Layer 4: HTTP parser extracted bytes</li>\n"
-                 "<li>Layer 5: Spring controller received method and path</li>\n"
-                 "<li>Layer 6: MVC dispatcher routed request</li>\n"
-                 "<li>Layer 7: Controller processed the route</li>\n"
-                 "<li>Layer 8: Service layer prepared business logic</li>\n"
-                 "<li>Layer 9: Service passed parameters</li>\n"
-                 "<li>Layer 10: Repository retrieved data</li>\n"
-                 "<li>Layer 11: DTO/entity created</li>\n"
-                 "<li>Layer 12: JDBC/Postgres completed DB interaction</li>\n"
-                 "<li>Layer 13: Response assembled and returned</li>\n"
-                 "</ul>\n"
-                 "</body>\n"
-                 "</html>",
-                 path, method);
+                 "User not found\n");
         return;
     }
 
-    printf("[TRACE] Layer 13: assembling error response for the client\n");
-    printf("        └─ Status code: 404 Not Found\n");
-    printf("        └─ Error message: %s\n", body);
-    printf("========== REQUEST FLOW COMPLETE ==========\n\n");
+    printf("[TRACE] Layer 7: Controller accepted route %s\n", request_path);
+    printf("        └─ Controller method: renderPage()\n\n");
+
+    printf("[TRACE] Layer 8: Spring service layer prepared the generic page response\n");
+    printf("        └─ Service: PageService\n");
+    printf("        └─ Method: renderPage()\n\n");
+
+    printf("[TRACE] Layer 9: Service layer processed the request parameters\n");
+    printf("        └─ Route: %s\n", request_path);
+    printf("        └─ Query string: %s\n\n", query[0] ? query : "none");
+
+    printf("[TRACE] Layer 10: Repository/cache layer retrieved content\n");
+    printf("        └─ Simulated cache/database lookup\n\n");
+
+    printf("[TRACE] Layer 11: DTO/entity object created for the response\n");
+    printf("        └─ DTO class: PageResponseDto\n");
+    printf("        └─ Response ready for serialization\n\n");
+
+    printf("[TRACE] Layer 12: JDBC/Postgres driver completed any required DB interactions\n");
+    printf("        └─ No actual DB rows required for this route\n\n");
+
+    snprintf(response_body, sizeof(response_body),
+             "<!DOCTYPE html>\n"
+             "<html><head><title>Route %s</title></head><body>"
+             "<h1>Route: %s</h1>"
+             "<p>This request was processed through the simulated app stack.</p>"
+             "</body></html>",
+             request_path,
+             request_path);
+
+    printf("[TRACE] Layer 13: HTTP response created\n");
+    printf("        └─ Serializer: HTML output\n");
+    printf("        └─ Content-Type: text/html\n");
+    printf("        └─ Response size: %zu bytes\n\n", strlen(response_body));
 
     snprintf(response, response_size,
-             "HTTP/1.1 404 Not Found\r\n"
-             "Content-Type: text/plain\r\n"
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: text/html\r\n"
              "Connection: close\r\n\r\n"
              "%s",
-             body);
+             response_body);
 }
 
 static int create_listener(int port) {

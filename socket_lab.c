@@ -560,7 +560,7 @@ void capture_raw_headers_for_flow(int tcp_fd)
         return;
     }
 
-    tv.tv_sec = 4;
+    tv.tv_sec = 8;
     tv.tv_usec = 0;
 
     if (setsockopt(raw_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
@@ -1030,15 +1030,13 @@ void show_traceroute()
             {
                 if (is_ipv4_address(token))
                 {
-                    printf("    [Lookup IP: %s] ", token);
-                    fflush(stdout);
                     if (lookup_ip_country(token, country, sizeof(country)))
                     {
-                        printf("Country: %s\n", country);
+                        printf(" [%s]", country);
                     }
                     else
                     {
-                        printf("(no country data)\n");
+                        printf(" [--]");
                     }
                     break;
                 }

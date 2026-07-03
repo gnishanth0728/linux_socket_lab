@@ -206,6 +206,75 @@ void instructions()
 }
 
 /*---------------------------------------------------------*/
+/* Create Socket                                            */
+/*---------------------------------------------------------*/
+
+int create_socket()
+{
+    banner("Stage 2 : socket()");
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sockfd < 0)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Socket successfully created.\n");
+    printf("Socket File Descriptor = %d\n", sockfd);
+
+    return sockfd;
+}
+
+/*---------------------------------------------------------*/
+/* Inspect Socket                                           */
+/*---------------------------------------------------------*/
+
+void inspect_socket(int fd)
+{
+    banner("Socket Inspection");
+
+    printf("PID = %d\n", getpid());
+    printf("Socket FD = %d\n\n", fd);
+
+    printf("This socket is NOT connected yet.\n");
+    printf("No TCP handshake has happened.\n\n");
+
+    show_process();
+
+    show_fd_table();
+
+    show_fdinfo(fd);
+
+    show_lsof();
+
+    show_ss();
+
+    printf("\n/proc/net/tcp\n\n");
+
+    show_tcp_table();
+
+    line();
+
+    printf("\nLinux has created:\n\n");
+
+    printf("Application\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("FD = %d\n", fd);
+    printf("      |\n");
+    printf("      v\n");
+    printf("Kernel Socket Object\n");
+    printf("      |\n");
+    printf("State = CLOSED\n");
+
+    line();
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
 /* Main                                                     */
 /*---------------------------------------------------------*/
 
@@ -213,14 +282,20 @@ int main()
 {
     banner("Linux Networking Lab");
 
-    printf("PID : %d\n", getpid());
+    printf("PID = %d\n", getpid());
 
     instructions();
 
     wait_enter();
 
-    printf("\nStage 1 complete.\n");
-    printf("Next part will create the socket.\n");
+    int sockfd = create_socket();
+
+    inspect_socket(sockfd);
+
+    printf("\nNext Stage:\n");
+    printf("DNS Resolution\n");
+
+    close(sockfd);
 
     return 0;
 }

@@ -12,7 +12,7 @@ Interactive C lab that demonstrates the lifecycle of a TCP client socket on Linu
 ## Build
 
 ```bash
-gcc socket_lab.c -o socket_lab
+gcc socket_lab.c -o socket_lab -lpcap
 ```
 
 ## Run

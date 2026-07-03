@@ -95,9 +95,10 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
     char buf[512];
     FILE *fp;
     char *newline;
+    char *ptr;
 
     snprintf(cmd, sizeof(cmd),
-             "timeout 2 geoiplookup %s 2>/dev/null | grep -oE '[A-Z]{2}$'",
+             "timeout 2 geoiplookup %s 2>/dev/null | cut -d',' -f2",
              ip);
     fp = popen(cmd, "r");
     if (fp != NULL)
@@ -107,7 +108,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
             newline = strchr(buf, '\n');
             if (newline)
                 *newline = '\0';
-            if (*buf)
+            if (*buf && strlen(buf) >= 2 && strlen(buf) <= 3)
             {
                 strncpy(country, buf, country_size);
                 country[country_size - 1] = '\0';
@@ -119,7 +120,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
     }
 
     snprintf(cmd, sizeof(cmd),
-             "timeout 3 curl -s https://ipinfo.io/%s/country 2>/dev/null",
+             "timeout 3 curl -s 'https://ipinfo.io/%s/json' 2>/dev/null | grep -o '\"country\":\"[A-Z]*\"' | cut -d'\"' -f4",
              ip);
     fp = popen(cmd, "r");
     if (fp != NULL)
@@ -129,7 +130,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
             newline = strchr(buf, '\n');
             if (newline)
                 *newline = '\0';
-            if (*buf && strlen(buf) <= 3)
+            if (*buf && strlen(buf) == 2)
             {
                 strncpy(country, buf, country_size);
                 country[country_size - 1] = '\0';
@@ -141,7 +142,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
     }
 
     snprintf(cmd, sizeof(cmd),
-             "timeout 2 whois -h whois.arin.net %s 2>/dev/null | grep -i 'country:' | head -1 | cut -d: -f2 | xargs",
+             "timeout 2 whois %s 2>/dev/null | grep -i 'country:' | head -1 | awk '{print $NF}' | head -c 2",
              ip);
     fp = popen(cmd, "r");
     if (fp != NULL)
@@ -151,7 +152,7 @@ int lookup_ip_country(const char *ip, char *country, size_t country_size)
             newline = strchr(buf, '\n');
             if (newline)
                 *newline = '\0';
-            if (*buf)
+            if (*buf && strlen(buf) == 2)
             {
                 strncpy(country, buf, country_size);
                 country[country_size - 1] = '\0';

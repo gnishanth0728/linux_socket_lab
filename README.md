@@ -3,6 +3,7 @@
 Interactive C lab that demonstrates the lifecycle of a TCP client socket on Linux:
 - socket creation
 - DNS resolution
+- traceroute path discovery to target host
 - TCP connect
 - HTTP request send
 - HTTP response receive loop
@@ -41,7 +42,7 @@ Show command help:
 ./socket_lab --help
 ```
 
-Save full stage output to a file (written during run and complete after close stage):
+Save full stage output to a file (live terminal output, final file written after run):
 
 ```bash
 ./socket_lab --save-output stage-output.log
@@ -90,6 +91,15 @@ Current runtime options:
 - `--packet-detail` verbose packet decode
 - `--save-output FILE` save full stage output transcript
 - `--help` usage information
+
+## Traceroute Output
+
+The lab includes a traceroute stage (`Stage 3.5`) before `connect()`.
+Its output is part of terminal output and is also saved when using `--save-output FILE`.
+
+It tries:
+- `traceroute -n <host>`
+- fallback: `tracepath -n <host>`
 
 ## Suggested External Observability Commands
 

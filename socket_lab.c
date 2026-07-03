@@ -42,6 +42,7 @@ char host_name[256] = DEFAULT_HOST;
 int server_port = DEFAULT_PORT;
 int save_output_enabled = 0;
 char output_file_path[512] = "";
+char output_tmp_path[640] = "";
 int saved_stdout_fd = -1;
 int saved_stderr_fd = -1;
 pid_t output_tee_pid = -1;
@@ -80,6 +81,12 @@ int start_output_tee(const char *path)
     int pipefd[2];
     pid_t pid;
 
+    snprintf(output_tmp_path,
+             sizeof(output_tmp_path),
+             "%s.tmp.%d",
+             path,
+             (int)getpid());
+
     if (pipe(pipefd) < 0)
         return -1;
 
@@ -110,7 +117,7 @@ int start_output_tee(const char *path)
 
         close(pipefd[1]);
 
-        log_fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        log_fd = open(output_tmp_path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
         if (log_fd < 0)
             _exit(1);
 
@@ -163,6 +170,12 @@ void stop_output_tee()
     {
         waitpid(output_tee_pid, &status, 0);
         output_tee_pid = -1;
+    }
+
+    if (save_output_enabled && output_tmp_path[0] != '\0')
+    {
+        if (rename(output_tmp_path, output_file_path) < 0)
+            perror("rename transcript");
     }
 }
 
@@ -840,7 +853,36 @@ void instructions()
     printf("4. Watch process\n\n");
     printf("watch -n 1 'ps -p %d -f'\n\n", getpid());
 
+    printf("5. Trace route to target\n\n");
+    printf("traceroute -n %s\n\n", host_name);
+
     line();
+}
+
+/*---------------------------------------------------------*/
+/* Traceroute                                               */
+/*---------------------------------------------------------*/
+
+void show_traceroute()
+{
+    char cmd[1024];
+
+    banner("Stage 3.5 : Traceroute Path");
+
+    printf("Tracing route to %s ...\n\n", host_name);
+    printf("This shows each hop between your machine and the server.\n\n");
+
+    sprintf(cmd,
+            "(traceroute -n %s || tracepath -n %s)",
+            host_name,
+            host_name);
+
+    run_command(cmd);
+
+    line();
+    printf("\nTraceroute output above is now part of this lab session output.\n");
+
+    wait_enter();
 }
 
 /*---------------------------------------------------------*/
@@ -1373,8 +1415,6 @@ int main(int argc, char *argv[])
             perror("start_output_tee");
             exit(EXIT_FAILURE);
         }
-
-        printf("Saving full stage output to: %s\n", output_file_path);
     }
 
     banner("Linux Networking Lab");
@@ -1394,6 +1434,8 @@ int main(int argc, char *argv[])
     inspect_socket(sockfd);
 
     resolve_dns();
+
+    show_traceroute();
 
     connect_socket(sockfd);
 
@@ -1450,7 +1492,6 @@ int main(int argc, char *argv[])
     if (save_output_enabled)
     {
         stop_output_tee();
-        printf("\nSaved full stage output to: %s\n", output_file_path);
     }
 
     return 0;

@@ -378,6 +378,233 @@ void connect_socket(int fd)
 }
 
 /*---------------------------------------------------------*/
+/* Build HTTP Request                                       */
+/*---------------------------------------------------------*/
+
+char http_request[2048];
+
+void build_http_request()
+{
+    banner("Stage 5 : Construct HTTP Request");
+
+    memset(http_request,0,sizeof(http_request));
+
+    sprintf(http_request,
+
+        "GET /oss/login.html HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "User-Agent: Socket-Lab/1.0\r\n"
+        "Accept: */*\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n",
+
+        HOST);
+
+    printf("HTTP Request\n\n");
+
+    printf("%s\n",http_request);
+
+    line();
+
+    printf("\nHTTP Request Length = %ld bytes\n",
+           strlen(http_request));
+
+    line();
+
+    hexdump((unsigned char *)http_request,
+            strlen(http_request));
+
+    line();
+
+    printf("\nNothing has been sent yet.\n");
+    printf("The request only exists in user-space memory.\n");
+
+    printf("\nCurrent Flow\n\n");
+
+    printf("Application\n");
+    printf("      |\n");
+    printf("      |\n");
+    printf("HTTP Bytes (User Memory)\n");
+    printf("      |\n");
+    printf("      |\n");
+    printf("Not yet in Linux Kernel\n");
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
+/* Send HTTP Request                                        */
+/*---------------------------------------------------------*/
+
+void send_request(int fd)
+{
+    banner("Stage 6 : send()");
+
+    printf("Calling send()...\n\n");
+
+    int bytes = send(fd,
+                     http_request,
+                     strlen(http_request),
+                     0);
+
+    if(bytes < 0)
+    {
+        perror("send");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Bytes Sent = %d\n", bytes);
+
+    line();
+
+    printf("\nLinux Kernel has copied the bytes into\n");
+    printf("the Socket Send Buffer.\n");
+
+    line();
+
+    show_ss();
+
+    show_fdinfo(fd);
+
+    printf("\nCurrent Flow\n\n");
+
+    printf("Application\n");
+    printf("      |\n");
+    printf("HTTP Bytes\n");
+    printf("      |\n");
+    printf("send(fd,...)\n");
+    printf("      |\n");
+    printf("Kernel Socket Send Buffer\n");
+    printf("      |\n");
+    printf("TCP Layer\n");
+    printf("      |\n");
+    printf("Waiting for transmission...\n");
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
+/* Receive HTTP Response                                    */
+/*---------------------------------------------------------*/
+
+void receive_response(int fd)
+{
+    banner("Stage 7 : recv()");
+
+    char buffer[8192];
+
+    memset(buffer,0,sizeof(buffer));
+
+    printf("Waiting for HTTP Response...\n\n");
+
+    int bytes = recv(fd,
+                     buffer,
+                     sizeof(buffer)-1,
+                     0);
+
+    if(bytes < 0)
+    {
+        perror("recv");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Bytes Received = %d\n\n", bytes);
+
+    line();
+
+    printf("\nLinux Kernel copied data from\n");
+    printf("Socket Receive Buffer\n");
+    printf("to\n");
+    printf("Application Buffer.\n");
+
+    line();
+
+    printf("\nHTTP Response\n\n");
+
+    printf("%s\n",buffer);
+
+    line();
+
+    printf("\nHex Dump\n");
+
+    hexdump((unsigned char *)buffer,bytes);
+
+    line();
+
+    show_ss();
+
+    show_fdinfo(fd);
+
+    printf("\nCurrent Flow\n\n");
+
+    printf("NIC\n");
+    printf(" |\n");
+    printf(" v\n");
+    printf("Ethernet Frame\n");
+    printf(" |\n");
+    printf(" v\n");
+    printf("IP Packet\n");
+    printf(" |\n");
+    printf(" v\n");
+    printf("TCP Segment\n");
+    printf(" |\n");
+    printf(" v\n");
+    printf("Socket Receive Buffer\n");
+    printf(" |\n");
+    printf("recv(fd,...)\n");
+    printf(" |\n");
+    printf(" v\n");
+    printf("Application Buffer\n");
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
+/* Close Socket                                             */
+/*---------------------------------------------------------*/
+
+void close_socket(int fd)
+{
+    banner("Stage 8 : close()");
+
+    printf("Closing socket...\n\n");
+
+    close(fd);
+
+    printf("Socket Closed Successfully.\n");
+
+    line();
+
+    printf("\nApplication\n");
+    printf("      |\n");
+    printf("close(fd)\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("Kernel releases Socket Object\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("TCP FIN\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("FIN-ACK\n");
+    printf("      |\n");
+    printf("      v\n");
+    printf("ACK\n");
+    printf("      |\n");
+    printf("Connection Closed\n");
+
+    line();
+
+    printf("\nChecking ss...\n");
+
+    show_ss();
+
+    printf("\nSocket should no longer appear.\n");
+
+    wait_enter();
+}
+
+/*---------------------------------------------------------*/
 /* Main                                                     */
 /*---------------------------------------------------------*/
 
@@ -399,10 +626,55 @@ int main()
 
     connect_socket(sockfd);
 
-    printf("\nNext Stage\n");
-    printf("Construct HTTP Request\n");
+    build_http_request();
 
-    close(sockfd);
+    send_request(sockfd);
+
+    receive_response(sockfd);
+
+    close_socket(sockfd);
+
+    banner("LAB COMPLETE");
+
+    printf("\nYou have now observed the complete lifecycle.\n\n");
+
+    printf("Application\n");
+    printf("      |\n");
+    printf("socket()\n");
+    printf("      |\n");
+    printf("FD Created\n");
+    printf("      |\n");
+    printf("DNS Resolution\n");
+    printf("      |\n");
+    printf("connect()\n");
+    printf("      |\n");
+    printf("TCP 3-Way Handshake\n");
+    printf("      |\n");
+    printf("HTTP Request Constructed\n");
+    printf("      |\n");
+    printf("send()\n");
+    printf("      |\n");
+    printf("Kernel Socket Send Buffer\n");
+    printf("      |\n");
+    printf("TCP Layer\n");
+    printf("      |\n");
+    printf("IP Layer\n");
+    printf("      |\n");
+    printf("Ethernet Layer\n");
+    printf("      |\n");
+    printf("NIC\n");
+    printf("      |\n");
+    printf("Internet\n");
+    printf("      |\n");
+    printf("Server\n");
+    printf("      |\n");
+    printf("HTTP Response\n");
+    printf("      |\n");
+    printf("recv()\n");
+    printf("      |\n");
+    printf("Application Buffer\n");
+    printf("      |\n");
+    printf("close()\n");
 
     return 0;
 }

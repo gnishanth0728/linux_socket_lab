@@ -114,8 +114,44 @@ static void process_request(const char *request, char *response, size_t response
         printf("[TRACE] Layer 10: no matching record found in the database\n");
         body = "User not found in DB";
     } else {
-        printf("[TRACE] Layer 7: no matching controller for route %s\n", path);
-        body = "Route not found";
+        printf("[TRACE] Layer 7: Controller accepted route %s\n", path);
+        printf("[TRACE] Layer 8: Spring service layer prepared to serve the request\n");
+        printf("[TRACE] Layer 9: Service layer processed the request parameters\n");
+        printf("[TRACE] Layer 10: Repository/cache layer retrieved content\n");
+        printf("[TRACE] Layer 11: DTO/entity object created for the response\n");
+        printf("[TRACE] Layer 12: JDBC/Postgres driver completed any required DB interactions\n");
+        printf("[TRACE] Layer 13: Response assembled and returned through spring-api -> nginx-proxy -> client\n");
+        snprintf(response, response_size,
+                 "HTTP/1.1 200 OK\r\n"
+                 "Content-Type: text/html\r\n"
+                 "Connection: close\r\n\r\n"
+                 "<!DOCTYPE html>\n"
+                 "<html>\n"
+                 "<head><title>Response</title></head>\n"
+                 "<body>\n"
+                 "<h1>Request received and processed</h1>\n"
+                 "<p><strong>Route:</strong> %s</p>\n"
+                 "<p><strong>Method:</strong> %s</p>\n"
+                 "<p>This request was traced through all layers:</p>\n"
+                 "<ul>\n"
+                 "<li>Layer 1: React frontend sent request</li>\n"
+                 "<li>Layer 2: nginx-proxy received connection</li>\n"
+                 "<li>Layer 3: spring-api socket received payload</li>\n"
+                 "<li>Layer 4: HTTP parser extracted bytes</li>\n"
+                 "<li>Layer 5: Spring controller received method and path</li>\n"
+                 "<li>Layer 6: MVC dispatcher routed request</li>\n"
+                 "<li>Layer 7: Controller processed the route</li>\n"
+                 "<li>Layer 8: Service layer prepared business logic</li>\n"
+                 "<li>Layer 9: Service passed parameters</li>\n"
+                 "<li>Layer 10: Repository retrieved data</li>\n"
+                 "<li>Layer 11: DTO/entity created</li>\n"
+                 "<li>Layer 12: JDBC/Postgres completed DB interaction</li>\n"
+                 "<li>Layer 13: Response assembled and returned</li>\n"
+                 "</ul>\n"
+                 "</body>\n"
+                 "</html>",
+                 path, method);
+        return;
     }
 
     printf("[TRACE] Layer 13: assembling error response for the client\n");

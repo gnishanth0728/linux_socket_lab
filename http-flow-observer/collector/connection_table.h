@@ -3,13 +3,32 @@
 
 #include "event.h"
 
+enum conn_state
+{
+    CONN_STATE_NEW = 0,
+    CONN_STATE_ACCEPT,
+    CONN_STATE_ACTIVE,
+    CONN_STATE_CLOSED
+};
+
 struct connection_entry
 {
-    uint64_t socket;
+    uint64_t        socket;
 
-    struct event last_event;
+    enum conn_state state;
 
-    unsigned long event_count;
+    uint64_t        first_seen;
+
+    uint32_t        pid;
+
+    uint32_t        saddr;
+    uint32_t        daddr;
+    uint16_t        sport;
+    uint16_t        dport;
+
+    struct event    last_event;
+
+    unsigned long   event_count;
 };
 
 void connection_table_init(void);

@@ -3,8 +3,11 @@
 
 #include <bpf/libbpf.h>
 
+#include "collector.h"
 #include "event.h"
 #include "event_queue.h"
+#include "connection_table.h"
+#include "timeline.h"
 
 static volatile sig_atomic_t running = 1;
 
@@ -80,14 +83,39 @@ static const char *event_name(__u32 event)
  * ============================================================
  */
 
-int handle_event(void *ctx, void *data, size_t len)
+int collector_handle_event(void *ctx, void *data, size_t len)
 {
     struct event *e = data;
+
+    (void)ctx;
+    (void)len;
+
+    /* track connection lifecycle */
+    connection_table_update(e);
+
+    /* build per-socket request timeline */
+    switch (e->event)
+    {
+        case EVENT_TCP_V4_RCV:
+            /* new inbound segment — start (or restart) socket timeline */
+            timeline_start(e->socket_ptr, e);
+            break;
+
+        case EVENT_TCP_SENDMSG:
+            /* response sent — finalise and print timeline */
+            timeline_finish(e->socket_ptr, e);
+            break;
+
+        default:
+            /* append to active timeline for this socket */
+            timeline_add_event(e->socket_ptr, e);
+            break;
+    }
 
     event_queue_push(&queue, e);
 
     printf("%-18llu %-6u %-6u %-4u %-20s %-20s\n",
-           e->timestamp,
+           (unsigned long long)e->timestamp,
            e->pid,
            e->tid,
            e->cpu,
@@ -133,6 +161,8 @@ int collector_run(struct ring_buffer *rb)
     signal(SIGTERM, signal_handler);
 
     event_queue_init(&queue);
+    connection_table_init();
+    timeline_init();
 
     printf("\n");
 

@@ -1,4 +1,6 @@
 APP := http-flow-observer
+AGENT_DIR := agent
+AGENT_JAR := $(AGENT_DIR)/target/http-flow-agent-1.0.0.jar
 
 CC := gcc
 CLANG := clang
@@ -14,6 +16,8 @@ LIBS := -lbpf -lelf -lz
 # ============================================================
 
 all: vmlinux kernel/tracer.skel.h $(APP)
+
+all-with-agent: all agent-build
 
 # ============================================================
 # Generate vmlinux.h
@@ -40,15 +44,22 @@ kernel/tracer.bpf.o: kernel/tracer.bpf.c
 kernel/tracer.skel.h: kernel/tracer.bpf.o
 	$(BPFTOOL) gen skeleton kernel/tracer.bpf.o > kernel/tracer.skel.h
 
+COLLECTOR_SRCS := \
+	collector/collector.c \
+	collector/connection_table.c \
+	collector/timeline.c \
+	collector/event_queue.c
+
 # ============================================================
 # Build Userspace
 # ============================================================
 
-$(APP): main.c kernel/tracer.skel.h
+$(APP): main.c $(COLLECTOR_SRCS) kernel/tracer.skel.h
 	$(CC) \
 	$(CFLAGS) \
 	-I. \
 	main.c \
+	$(COLLECTOR_SRCS) \
 	-o $(APP) \
 	$(LIBS)
 
@@ -68,4 +79,10 @@ clean:
 run: all
 	sudo ./$(APP)
 
-.PHONY: all clean run
+agent-build:
+	$(MAKE) -C $(AGENT_DIR) build
+
+agent-clean:
+	$(MAKE) -C $(AGENT_DIR) clean
+
+.PHONY: all all-with-agent clean run agent-build agent-clean

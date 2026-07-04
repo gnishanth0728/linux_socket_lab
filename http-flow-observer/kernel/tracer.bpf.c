@@ -196,6 +196,29 @@ save_connection(struct sock *sk,
             BPF_ANY);
 }
 
+/* ============================================================
+ * Find Connection
+ * ============================================================
+ */
+
+
+static __always_inline struct connection *
+find_connection(struct sock *sk)
+{
+    __u64 key;
+
+    if (!sk)
+        return NULL;
+
+    key = (__u64)sk;
+
+    return bpf_map_lookup_elem(&connections, &key);
+}
+
+/* ============================================================
+ * submit_event()
+ * ============================================================
+ */
 static __always_inline int submit_event(__u32 type)
 {
     return submit_event_ex(
@@ -313,18 +336,7 @@ int BPF_KPROBE(trace_tcp_v4_rcv,
             daddr,
             sport,
             dport);
-    static __always_inline struct connection *
-    find_connection(struct sock *sk)
-    {
-        __u64 key;
 
-        if (!sk)
-            return NULL;
-
-        key = (__u64)sk;
-
-        return bpf_map_lookup_elem(&connections, &key);
-    }
     return submit_event_ex(
         EVENT_TCP_V4_RCV,
 
@@ -468,7 +480,7 @@ int BPF_KPROBE(trace_tcp_write_xmit)
  * ============================================================
  */
 
-SEC("kprobe/ip_output")
+ SEC("kprobe/ip_output")
 int BPF_KPROBE(trace_ip_output,
                struct net *net,
                struct sock *sk)

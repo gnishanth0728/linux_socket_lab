@@ -130,7 +130,7 @@ int main(void)
     printf("HTTP FLOW OBSERVER\n");
     printf("===============================================\n\n");
 
-=.  printf("%-18llu %-6u %-4u %-16s %-20s "
+    printf("%-18llu %-6u %-4u %-16s %-20s "
        "%08x:%u -> %08x:%u proto=%u len=%u\n",
        e->timestamp,
        e->pid,

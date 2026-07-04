@@ -56,6 +56,10 @@ struct event
 
     __u16 packet_len;
 
+    __u64 socket_cookie;
+
+    __u64 socket_ptr;
+
     __u8 protocol;
 
     __u8 tcp_flags;

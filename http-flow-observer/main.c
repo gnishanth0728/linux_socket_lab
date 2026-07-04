@@ -93,19 +93,22 @@ static int handle_event(void *ctx, void *data, size_t size)
     ipv4_to_string(e->daddr, dst);
 
     printf("%-18llu %-6u %-4u %-16s %-20s\n",
-           (unsigned long long)e->timestamp,
-           e->pid,
-           e->cpu,
-           e->comm,
-           event_name(e->event));
+       (unsigned long long)e->timestamp,
+       e->pid,
+       e->cpu,
+       e->comm,
+       event_name(e->event));
 
-    printf("    %s:%u -> %s:%u  proto=%u len=%u\n\n",
-           src,
-           e->sport,
-           dst,
-           e->dport,
-           e->protocol,
-           e->packet_len);
+    printf("Socket = 0x%llx\n",
+          (unsigned long long)e->socket_ptr);
+
+    printf("%s:%u -> %s:%u proto=%u len=%u\n\n",
+          src,
+          e->sport,
+          dst,
+          e->dport,
+          e->protocol,
+       e->packet_len);
 
     return 0;
 }

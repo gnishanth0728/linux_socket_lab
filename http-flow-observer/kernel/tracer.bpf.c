@@ -69,6 +69,10 @@ static __always_inline int submit_event_ex(
     __u16 sport,
     __u16 dport,
     __u16 packet_len,
+
+    __u64 socket_cookie,
+    __u64 socket_ptr,
+
     __u8 protocol,
     __u8 tcp_flags,
     __u32 seq,
@@ -105,6 +109,8 @@ static __always_inline int submit_event_ex(
     e->dport = dport;
 
     e->packet_len = packet_len;
+    e->socket_cookie = socket_cookie;
+    e->socket_ptr = socket_ptr;
 
     e->protocol = protocol;
     e->tcp_flags = tcp_flags;
@@ -123,13 +129,21 @@ static __always_inline int submit_event(__u32 type)
 {
     return submit_event_ex(
         type,
+
         0,
         0,
+
         0,
         0,
+
+        0,
+
         0,
         0,
+
         0,
+        0,
+
         0,
         0);
 }
@@ -193,7 +207,8 @@ int BPF_KPROBE(trace_ip_rcv)
  */
 
 SEC("kprobe/tcp_v4_rcv")
-int BPF_KPROBE(trace_tcp_v4_rcv, struct sk_buff *skb)
+int BPF_KPROBE(trace_tcp_v4_rcv,
+               struct sk_buff *skb)
 {
     struct sock *sk = NULL;
 
@@ -203,7 +218,11 @@ int BPF_KPROBE(trace_tcp_v4_rcv, struct sk_buff *skb)
     __u16 sport = 0;
     __u16 dport = 0;
 
+    __u64 socket_ptr = 0;
+
     bpf_core_read(&sk, sizeof(sk), &skb->sk);
+
+    socket_ptr = (__u64)sk;
 
     read_socket(
         sk,
@@ -214,14 +233,25 @@ int BPF_KPROBE(trace_tcp_v4_rcv, struct sk_buff *skb)
 
     return submit_event_ex(
         EVENT_TCP_V4_RCV,
+
         saddr,
         daddr,
+
         sport,
         dport,
+
         0,
-        IPPROTO_TCP,
+
+        0,              /* socket_cookie */
+
+        socket_ptr,
+
+        6,
+
         0,
+
         0,
+
         0);
 }
 

@@ -79,10 +79,26 @@ clean:
 run: all
 	sudo ./$(APP)
 
+# ============================================================
+# Live UI  (Build 6)
+# Serves output/ on http://localhost:$(UI_PORT)/index.html
+# Override port: make serve UI_PORT=9090
+# ============================================================
+
+UI_PORT ?= 8090
+UI_DIR  := output
+
+serve: $(UI_DIR)
+	@echo "Live UI → http://localhost:$(UI_PORT)/index.html"
+	@cd $(UI_DIR) && python3 -m http.server $(UI_PORT)
+
+$(UI_DIR):
+	@mkdir -p $(UI_DIR)
+
 agent-build:
 	$(MAKE) -C $(AGENT_DIR) build
 
 agent-clean:
 	$(MAKE) -C $(AGENT_DIR) clean
 
-.PHONY: all all-with-agent clean run agent-build agent-clean
+.PHONY: all all-with-agent clean run serve agent-build agent-clean

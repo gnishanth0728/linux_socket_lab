@@ -114,6 +114,31 @@ static const char *event_name(uint32_t event)
     }
 }
 
+static const char *event_desc(uint32_t event)
+{
+    switch (event)
+    {
+        case EVENT_NET_RX:            return "NIC receives Ethernet frame";
+        case EVENT_IRQ_ENTRY:         return "CPU enters IRQ handler";
+        case EVENT_SOFTIRQ_ENTRY:     return "SoftIRQ (NET_RX_SOFTIRQ) scheduled";
+        case EVENT_IP_RCV:            return "IPv4 layer validates header";
+        case EVENT_TCP_V4_RCV:        return "TCP layer finds destination socket";
+        case EVENT_TCP_DATA_QUEUE:    return "Socket receive queue copies payload";
+        case EVENT_SOCK_DEF_READABLE: return "Socket marked readable, recv() wakes up";
+        case EVENT_ACCEPT4_ENTER:     return "accept() called by application";
+        case EVENT_ACCEPT4_EXIT:      return "accept() returned new socket fd";
+        case EVENT_RECVFROM_ENTER:    return "recv() called, waiting for HTTP request";
+        case EVENT_RECVFROM_EXIT:     return "recv() returned HTTP request data";
+        case EVENT_SENDTO_ENTER:      return "send() called with HTTP response";
+        case EVENT_SENDTO_EXIT:       return "send() returned";
+        case EVENT_TCP_SENDMSG:       return "TCP transmit path entered";
+        case EVENT_TCP_WRITE_XMIT:    return "TCP segments enqueued for transmit";
+        case EVENT_IP_OUTPUT:         return "IPv4 routes and transmits packet";
+        case EVENT_NET_DEV_QUEUE:     return "NIC transmit queue enqueued";
+        default:                      return "kernel event";
+    }
+}
+
 static void ip_to_str(uint32_t addr, char *buf)
 {
     sprintf(buf,
@@ -398,6 +423,7 @@ static void write_ui_html(void)
     if (!f)
         return;
 
+    /* ---- HTML + CSS ---- */
     fprintf(f,
             "<!doctype html>\n"
             "<html lang=\"en\">\n"
@@ -406,32 +432,66 @@ static void write_ui_html(void)
             "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
             "  <title>HTTP Flow Live UI</title>\n"
             "  <style>\n"
-            "    :root { --bg:#0b1220; --card:#111a2c; --line:#223555; --txt:#e8eefc; --muted:#9eb0cf; --ok:#3ddc97; --warn:#ffcc66; }\n"
-            "    * { box-sizing:border-box; }\n"
-            "    body { margin:0; font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif; background: radial-gradient(circle at top right,#1a2a4a 0,#0b1220 55%%); color:var(--txt); }\n"
-            "    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }\n"
-            "    h1 { margin:0 0 16px; font-size:28px; letter-spacing:.3px; }\n"
-            "    .row { display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); margin-bottom:14px; }\n"
-            "    .card { background:linear-gradient(180deg,#15213a,#10182a); border:1px solid var(--line); border-radius:14px; padding:14px; }\n"
-            "    .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.7px; }\n"
-            "    .value { font-size:24px; margin-top:6px; color:var(--ok); }\n"
-            "    .panel { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }\n"
-            "    pre { margin:0; white-space:pre-wrap; font-size:12px; color:#d5e2ff; }\n"
+            "    :root{--bg:#0b1220;--card:#111a2c;--line:#223555;--txt:#e8eefc;"
+            "--muted:#9eb0cf;--ok:#3ddc97;--warn:#ffcc66;--k:#7eb8f7;--j:#a78bfa;}\n"
+            "    *{box-sizing:border-box;}\n"
+            "    body{margin:0;font-family:'IBM Plex Sans','Segoe UI',sans-serif;"
+            "background:radial-gradient(circle at top right,#1a2a4a 0,#0b1220 55%%);"
+            "color:var(--txt);}\n"
+            "    .wrap{max-width:960px;margin:24px auto;padding:0 16px;}\n"
+            "    h1{margin:0 0 4px;font-size:26px;}\n"
+            "    .sub{color:var(--muted);font-size:13px;margin-bottom:16px;}\n"
+            "    .row{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:14px;}\n"
+            "    .card{background:linear-gradient(180deg,#15213a,#10182a);"
+            "border:1px solid var(--line);border-radius:12px;padding:14px;}\n"
+            "    .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.7px;}\n"
+            "    .value{font-size:22px;margin-top:5px;color:var(--ok);}\n"
+            "    .panel{background:var(--card);border:1px solid var(--line);"
+            "border-radius:12px;padding:14px;margin-bottom:14px;}\n"
+            "    .ptitle{color:var(--muted);font-size:11px;text-transform:uppercase;"
+            "letter-spacing:.7px;margin-bottom:10px;}\n"
+            "    .step{display:flex;align-items:flex-start;gap:10px;padding:7px 0;"
+            "border-bottom:1px solid var(--line);}\n"
+            "    .step:last-child{border-bottom:none;}\n"
+            "    .snum{min-width:30px;text-align:right;color:var(--muted);font-size:12px;padding-top:1px;}\n"
+            "    .sdetail{flex:1;}\n"
+            "    .sdesc{font-size:13px;font-weight:600;}\n"
+            "    .smeta{font-size:11px;color:var(--muted);margin-top:2px;}\n"
+            "    .badge-k{display:inline-block;font-size:10px;padding:1px 6px;"
+            "border-radius:4px;background:#1e3a5f;color:var(--k);margin-right:6px;}\n"
+            "    .badge-j{display:inline-block;font-size:10px;padding:1px 6px;"
+            "border-radius:4px;background:#2d1f4a;color:var(--j);margin-right:6px;}\n"
+            "    .empty{color:var(--muted);font-size:13px;text-align:center;padding:20px;}\n"
             "  </style>\n"
             "</head>\n"
             "<body>\n"
             "  <div class=\"wrap\">\n"
-            "    <h1>HTTP Flow Observer Live UI</h1>\n"
+            "    <h1>HTTP Flow Observer</h1>\n"
+            "    <div class=\"sub\">Complete OS + JVM request path &mdash; auto-refreshes every 1 s</div>\n");
+
+    /* ---- metric cards ---- */
+    fprintf(f,
             "    <div class=\"row\">\n"
-            "      <div class=\"card\"><div class=\"label\">Requests</div><div class=\"value\" id=\"req\">0</div></div>\n"
-            "      <div class=\"card\"><div class=\"label\">Avg Latency (us)</div><div class=\"value\" id=\"avg\">0</div></div>\n"
-            "      <div class=\"card\"><div class=\"label\">Max Latency (us)</div><div class=\"value\" id=\"max\">0</div></div>\n"
-            "      <div class=\"card\"><div class=\"label\">Events</div><div class=\"value\" id=\"evt\">0</div></div>\n"
-            "    </div>\n"
+            "      <div class=\"card\"><div class=\"label\">Requests</div>"
+            "<div class=\"value\" id=\"req\">0</div></div>\n"
+            "      <div class=\"card\"><div class=\"label\">Avg Latency (us)</div>"
+            "<div class=\"value\" id=\"avg\">0</div></div>\n"
+            "      <div class=\"card\"><div class=\"label\">Max Latency (us)</div>"
+            "<div class=\"value\" id=\"max\">0</div></div>\n"
+            "      <div class=\"card\"><div class=\"label\">Total Events</div>"
+            "<div class=\"value\" id=\"evt\">0</div></div>\n"
+            "    </div>\n");
+
+    /* ---- latest request step panel ---- */
+    fprintf(f,
             "    <div class=\"panel\">\n"
-            "      <div class=\"label\">Latest Request JSON (tail)</div>\n"
-            "      <pre id=\"tail\">waiting...</pre>\n"
-            "    </div>\n"
+            "      <div class=\"ptitle\">Latest Request &mdash; complete network path</div>\n"
+            "      <div id=\"reqmeta\" class=\"smeta\" style=\"margin-bottom:8px\"></div>\n"
+            "      <div id=\"steps\"><div class=\"empty\">waiting for first request...</div></div>\n"
+            "    </div>\n");
+
+    /* ---- JavaScript ---- */
+    fprintf(f,
             "  </div>\n"
             "  <script>\n"
             "    async function refresh() {\n"
@@ -440,17 +500,41 @@ static void write_ui_html(void)
             "        if (m.ok) {\n"
             "          const j = await m.json();\n"
             "          document.getElementById('req').textContent = j.requests ?? 0;\n"
-            "          document.getElementById('avg').textContent = Number(j.avg_latency_us ?? 0).toFixed(2);\n"
-            "          document.getElementById('max').textContent = Number(j.max_latency_us ?? 0).toFixed(2);\n"
+            "          document.getElementById('avg').textContent ="
+            " Number(j.avg_latency_us ?? 0).toFixed(2);\n"
+            "          document.getElementById('max').textContent ="
+            " Number(j.max_latency_us ?? 0).toFixed(2);\n"
             "          document.getElementById('evt').textContent = j.total_events ?? 0;\n"
             "        }\n"
             "      } catch (_) {}\n"
             "      try {\n"
-            "        const r = await fetch('requests.jsonl?ts='+Date.now());\n"
+            "        const r = await fetch('merged_requests.jsonl?ts='+Date.now());\n"
             "        if (r.ok) {\n"
             "          const txt = await r.text();\n"
-            "          const lines = txt.trim().split(/\\n/);\n"
-            "          document.getElementById('tail').textContent = lines.slice(-3).join('\\n\\n') || 'no requests yet';\n"
+            "          const lines = txt.trim().split(/\\n/).filter(Boolean);\n"
+            "          if (!lines.length) return;\n"
+            "          const req = JSON.parse(lines[lines.length - 1]);\n"
+            "          document.getElementById('reqmeta').textContent =\n"
+            "            'Request #' + req.id + '  ' + req.uri +\n"
+            "            '   Client: ' + req.client + '  Server: ' + req.server +\n"
+            "            '   Total: ' + req.total_ms + ' ms';\n"
+            "          const steps = req.steps || [];\n"
+            "          document.getElementById('steps').innerHTML = steps.map(s => {\n"
+            "            const badge = s.layer === 'kernel'\n"
+            "              ? '<span class=\"badge-k\">KERNEL</span>'\n"
+            "              : '<span class=\"badge-j\">JVM</span>';\n"
+            "            const timing = s.layer === 'kernel'\n"
+            "              ? (s.delta_us > 0 ? '+' + Number(s.delta_us).toFixed(3) + ' us' : 'start')\n"
+            "              : Number(s.duration_us).toFixed(3) + ' us';\n"
+            "            const sql = s.sql ? '<br><span style=\"color:#7dd3fc\">SQL: '"
+            "+ s.sql + '</span>' : '';\n"
+            "            return '<div class=\"step\">'"
+            "+'<div class=\"snum\">'+ s.n +'</div>'"
+            "+'<div class=\"sdetail\">'"
+            "+'<div class=\"sdesc\">'+ badge + s.desc +'</div>'"
+            "+'<div class=\"smeta\">'+ (s.method || s.stage) +'&nbsp;&nbsp;'+ timing + sql +'</div>'"
+            "+'</div></div>';\n"
+            "          }).join('');\n"
             "        }\n"
             "      } catch (_) {}\n"
             "    }\n"
@@ -470,6 +554,69 @@ static void export_build6_artifacts(const struct timeline *tl)
     export_request_jsonl(tl);
     export_flame_folded(tl);
     export_sequence_mmd(tl);
+}
+
+/* ============================================================
+ * Kernel Handoff File  (read by Java agent for merged view)
+ * ============================================================
+ *
+ * Written to output/kernel_request.txt when timeline_finish()
+ * fires (TCP_SENDMSG).  The Java agent reads this file at the
+ * end of Tomcat.invoke() to prepend kernel steps to its output.
+ *
+ * Format (pipe-delimited for easy Java parsing):
+ *   CLIENT|<ip>:<port>
+ *   SERVER|<ip>:<port>
+ *   SOCKET|0x<hex>
+ *   STEP|<n>|<event_name>|<description>|<delta_ns>
+ *   ...
+ *   TOTAL_NS|<total>
+ *   COUNT|<n>
+ * ============================================================
+ */
+
+#define KERNEL_REQUEST_FILE OUTPUT_DIR "/kernel_request.txt"
+
+static void write_kernel_request_file(const struct timeline *tl)
+{
+    FILE *f;
+    unsigned int i;
+    char src[32];
+    char dst[32];
+    uint64_t total_ns;
+    const struct event *first;
+
+    if (!tl || tl->count == 0)
+        return;
+
+    f = fopen(KERNEL_REQUEST_FILE, "w");
+    if (!f)
+        return;
+
+    first = &tl->entries[0].e;
+    ip_to_str(first->saddr, src);
+    ip_to_str(first->daddr, dst);
+    total_ns = timeline_total_ns(tl);
+
+    fprintf(f, "CLIENT|%s:%u\n", src, first->sport);
+    fprintf(f, "SERVER|%s:%u\n", dst, first->dport);
+    fprintf(f, "SOCKET|0x%llx\n", (unsigned long long)tl->socket);
+
+    for (i = 0; i < tl->count; i++)
+    {
+        const struct timeline_entry *te = &tl->entries[i];
+
+        fprintf(f, "STEP|%u|%s|%s|%llu\n",
+                i + 1,
+                event_name(te->e.event),
+                event_desc(te->e.event),
+                (unsigned long long)te->delta_ns);
+    }
+
+    fprintf(f, "TOTAL_NS|%llu\n", (unsigned long long)total_ns);
+    fprintf(f, "COUNT|%u\n", tl->count);
+
+    fclose(f);
 }
 
 /* ============================================================
@@ -572,6 +719,7 @@ void timeline_finish(uint64_t socket, const struct event *e)
 
     append(tl, e);
 
+    write_kernel_request_file(tl);
     timeline_print(socket);
     export_build6_artifacts(tl);
 
@@ -584,49 +732,44 @@ void timeline_print(uint64_t socket)
     struct timeline *tl = timeline_find(socket);
     unsigned int i;
     uint64_t total = 0;
+    char src[32];
+    char dst[32];
 
     if (!tl || tl->count == 0)
         return;
 
+    ip_to_str(tl->entries[0].e.saddr, src);
+    ip_to_str(tl->entries[0].e.daddr, dst);
+
     printf("\n");
-    printf("==============================================================\n");
-    printf("REQUEST TIMELINE socket=0x%llx\n", (unsigned long long)socket);
-    printf("==============================================================\n");
-    printf("%-5s  %-22s  %10s  %-7s  %s\n",
-           "Step", "Event", "Delta(us)", "PID", "Flow");
-    printf("--------------------------------------------------------------\n");
+    printf("====================================================================\n");
+    printf("KERNEL NETWORK PATH  socket=0x%llx\n", (unsigned long long)socket);
+    printf("Client: %s:%u  →  Server: %s:%u\n",
+           src, tl->entries[0].e.sport,
+           dst, tl->entries[0].e.dport);
+    printf("====================================================================\n");
 
     for (i = 0; i < tl->count; i++)
     {
         const struct timeline_entry *te = &tl->entries[i];
-        const struct event *ev = &te->e;
-        char src[32];
-        char dst[32];
 
-        ip_to_str(ev->saddr, src);
-        ip_to_str(ev->daddr, dst);
+        printf("\nSTEP %u  %s\n", i + 1, event_desc(te->e.event));
 
-        printf("[%2u]   %-22s  %10.3f  %-7u  %s:%u -> %s:%u\n",
-               i + 1,
-               event_name(ev->event),
-               (double)te->delta_ns / 1000.0,
-               ev->pid,
-               src, ev->sport,
-               dst, ev->dport);
+        if (i == 0)
+            printf("        %-28s\n", event_name(te->e.event));
+        else
+            printf("        %-28s  Δ %.3f us\n",
+                   event_name(te->e.event),
+                   (double)te->delta_ns / 1000.0);
     }
 
     if (tl->count > 1)
         total = tl->entries[tl->count - 1].e.timestamp - tl->entries[0].e.timestamp;
 
-    printf("--------------------------------------------------------------\n");
-    printf("Total: %.3f us  (%u events)\n", (double)total / 1000.0, tl->count);
-    printf("Artifacts:\n");
-    printf("  - %s\n", REQUESTS_JSONL);
-    printf("  - %s\n", METRICS_JSON);
-    printf("  - %s\n", FLAME_FOLDED);
-    printf("  - %s\n", SEQUENCE_MMD);
-    printf("  - %s\n", UI_HTML);
-    printf("==============================================================\n\n");
+    printf("\n====================================================================\n");
+    printf("Kernel path: %.3f us  (%u steps)\n", (double)total / 1000.0, tl->count);
+    printf("Handoff file: %s\n", KERNEL_REQUEST_FILE);
+    printf("====================================================================\n\n");
 }
 
 void timeline_clear(uint64_t socket)

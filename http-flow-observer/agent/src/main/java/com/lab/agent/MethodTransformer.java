@@ -78,6 +78,22 @@ public final class MethodTransformer implements ClassFileTransformer {
                                         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
                                         false);
                             }
+
+                            // Capture request URI for merged request-centric view.
+                            // DispatcherServlet.doDispatch(HttpServletRequest, HttpServletResponse)
+                            if ("SPRING_MVC".equals(stage) && "doDispatch".equals(name)) {
+                                loadArg(0);
+                                visitMethodInsn(INVOKEINTERFACE,
+                                        "javax/servlet/http/HttpServletRequest",
+                                        "getRequestURI",
+                                        "()Ljava/lang/String;",
+                                        true);
+                                visitMethodInsn(INVOKESTATIC,
+                                        "com/lab/agent/TracerContext",
+                                        "setRequestUri",
+                                        "(Ljava/lang/String;)V",
+                                        false);
+                            }
                         }
 
                         @Override

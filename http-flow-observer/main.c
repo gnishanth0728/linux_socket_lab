@@ -6,7 +6,7 @@
 
 #include "kernel/tracer.skel.h"
 #include "collector/event.h"
-
+#include <inttypes.h>
 static volatile sig_atomic_t running = 1;
 
 /* ============================================================
@@ -25,24 +25,60 @@ static const char *event_name(unsigned int event)
 {
     switch (event)
     {
-        case 5:
+        case EVENT_NET_RX:
+            return "NET_RX";
+
+        case EVENT_IRQ_ENTRY:
+            return "IRQ_ENTRY";
+
+        case EVENT_SOFTIRQ_ENTRY:
+            return "SOFTIRQ";
+
+        case EVENT_IP_RCV:
+            return "IP_RCV";
+
+        case EVENT_TCP_V4_RCV:
             return "TCP_V4_RCV";
+
+        case EVENT_TCP_DATA_QUEUE:
+            return "TCP_DATA_QUEUE";
+
+        case EVENT_SOCK_DEF_READABLE:
+            return "SOCK_READABLE";
+
+        case EVENT_RECVFROM_ENTER:
+            return "RECVFROM";
+
+        case EVENT_SENDTO_ENTER:
+            return "SENDTO";
+
+        case EVENT_TCP_SENDMSG:
+            return "TCP_SENDMSG";
+
+        case EVENT_TCP_WRITE_XMIT:
+            return "TCP_WRITE_XMIT";
+
+        case EVENT_IP_OUTPUT:
+            return "IP_OUTPUT";
+
+        case EVENT_NET_DEV_QUEUE:
+            return "NET_DEV_QUEUE";
 
         default:
             return "UNKNOWN";
     }
 }
-
 /* ============================================================
  * Ring Buffer Callback
  * ============================================================
  */
 
+
 static int handle_event(void *ctx, void *data, size_t size)
 {
     struct event *e = data;
 
-    printf("%-18llu %-6u %-4u %-16s %-20s "
+    printf("%-18" PRIu64 " %-6u %-4u %-16s %-20s "
            "%08x:%u -> %08x:%u proto=%u len=%u\n",
            e->timestamp,
            e->pid,

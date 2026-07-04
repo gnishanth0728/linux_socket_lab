@@ -1,7 +1,7 @@
-#ifndef HTTP_FLOW_EVENT_H
-#define HTTP_FLOW_EVENT_H
+#ifndef HTTP_FLOW_EVENT_BPF_H
+#define HTTP_FLOW_EVENT_BPF_H
 
-#include <stdint.h>
+#include "../vmlinux.h"
 
 #define TASK_COMM_LEN 16
 
@@ -9,9 +9,9 @@ enum event_type
 {
     EVENT_UNKNOWN = 0,
 
-    /* ==============================
+    /* =========================================================
      * Network Receive
-     * ============================== */
+     * ========================================================= */
 
     EVENT_NET_RX,
 
@@ -27,9 +27,9 @@ enum event_type
 
     EVENT_SOCK_DEF_READABLE,
 
-    /* ==============================
+    /* =========================================================
      * Socket
-     * ============================== */
+     * ========================================================= */
 
     EVENT_ACCEPT4_ENTER,
 
@@ -43,9 +43,9 @@ enum event_type
 
     EVENT_SENDTO_EXIT,
 
-    /* ==============================
+    /* =========================================================
      * Network Transmit
-     * ============================== */
+     * ========================================================= */
 
     EVENT_TCP_SENDMSG,
 
@@ -60,29 +60,29 @@ struct event
 {
     /* Timestamp */
 
-    uint64_t timestamp;
+    __u64 timestamp;
 
-    /* Process Information */
+    /* Process */
 
-    uint32_t pid;
+    __u32 pid;
 
-    uint32_t tid;
+    __u32 tid;
 
-    uint32_t uid;
+    __u32 uid;
 
-    uint32_t gid;
+    __u32 gid;
 
     /* CPU */
 
-    uint32_t cpu;
+    __u32 cpu;
 
-    /* Event Type */
+    /* Event */
 
-    uint32_t event;
+    __u32 event;
 
     /* Process Name */
 
     char comm[TASK_COMM_LEN];
 };
 
-#endif
+#endif /* HTTP_FLOW_EVENT_BPF_H */

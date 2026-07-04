@@ -2,7 +2,6 @@
 #define HTTP_FLOW_EVENT_QUEUE_H
 
 #include <stdbool.h>
-#include <stddef.h>
 
 #include "event.h"
 
@@ -13,7 +12,9 @@ struct event_queue
     struct event buffer[EVENT_QUEUE_SIZE];
 
     unsigned int head;
+
     unsigned int tail;
+
     unsigned int count;
 };
 

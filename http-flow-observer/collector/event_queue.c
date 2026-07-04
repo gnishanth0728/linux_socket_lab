@@ -14,7 +14,7 @@ bool event_queue_is_empty(const struct event_queue *queue)
 
 bool event_queue_is_full(const struct event_queue *queue)
 {
-    return queue->count == EVENT_QUEUE_SIZE;
+    return queue->count >= EVENT_QUEUE_SIZE;
 }
 
 bool event_queue_push(struct event_queue *queue,
@@ -27,7 +27,7 @@ bool event_queue_push(struct event_queue *queue,
 
     queue->tail++;
 
-    if (queue->tail >= EVENT_QUEUE_SIZE)
+    if (queue->tail == EVENT_QUEUE_SIZE)
         queue->tail = 0;
 
     queue->count++;
@@ -45,7 +45,7 @@ bool event_queue_pop(struct event_queue *queue,
 
     queue->head++;
 
-    if (queue->head >= EVENT_QUEUE_SIZE)
+    if (queue->head == EVENT_QUEUE_SIZE)
         queue->head = 0;
 
     queue->count--;
@@ -60,9 +60,9 @@ unsigned int event_queue_size(const struct event_queue *queue)
 
 void event_queue_clear(struct event_queue *queue)
 {
+    memset(queue->buffer, 0, sizeof(queue->buffer));
+
     queue->head = 0;
     queue->tail = 0;
     queue->count = 0;
-
-    memset(queue->buffer, 0, sizeof(queue->buffer));
 }

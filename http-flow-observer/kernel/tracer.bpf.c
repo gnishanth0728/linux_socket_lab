@@ -67,3 +67,9 @@ int BPF_KPROBE(trace_tcp_v4_rcv)
 {
     return submit_event(EVENT_TCP_V4_RCV);
 }
+
+SEC("tracepoint/syscalls/sys_enter_recvfrom")
+int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)
+{
+    return submit_event(EVENT_RECVFROM_ENTER);
+}

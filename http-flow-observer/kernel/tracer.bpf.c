@@ -144,16 +144,7 @@ int BPF_KPROBE(trace_sock_def_readable)
     return submit_event(EVENT_SOCK_DEF_READABLE);
 }
 
-/* ============================================================
- * recvfrom()
- * ============================================================
- */
 
-SEC("tracepoint/syscalls/sys_enter_recvfrom")
-int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)
-{
-    return submit_event(EVENT_RECVFROM_ENTER);
-}
 
 /* ============================================================
  * sendto()

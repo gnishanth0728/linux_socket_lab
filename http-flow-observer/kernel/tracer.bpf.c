@@ -313,7 +313,18 @@ int BPF_KPROBE(trace_tcp_v4_rcv,
             daddr,
             sport,
             dport);
-            
+    static __always_inline struct connection *
+    find_connection(struct sock *sk)
+    {
+        __u64 key;
+
+        if (!sk)
+            return NULL;
+
+        key = (__u64)sk;
+
+        return bpf_map_lookup_elem(&connections, &key);
+    }
     return submit_event_ex(
         EVENT_TCP_V4_RCV,
 
@@ -355,11 +366,39 @@ int BPF_KPROBE(trace_tcp_data_queue)
  */
 
 SEC("kprobe/sock_def_readable")
-int BPF_KPROBE(trace_sock_def_readable)
+int BPF_KPROBE(trace_sock_def_readable,
+               struct sock *sk)
 {
-    return submit_event(EVENT_SOCK_DEF_READABLE);
-}
+    struct connection *conn;
 
+    conn = find_connection(sk);
+
+    if (!conn)
+        return submit_event(EVENT_SOCK_DEF_READABLE);
+
+    return submit_event_ex(
+            EVENT_SOCK_DEF_READABLE,
+
+            conn->saddr,
+            conn->daddr,
+
+            conn->sport,
+            conn->dport,
+
+            0,
+
+            0,
+
+            (__u64)sk,
+
+            6,
+
+            0,
+
+            0,
+
+            0);
+}
 
 
 /* ============================================================
@@ -379,9 +418,38 @@ int trace_sendto_enter(struct trace_event_raw_sys_enter *ctx)
  */
 
 SEC("kprobe/tcp_sendmsg")
-int BPF_KPROBE(trace_tcp_sendmsg)
+int BPF_KPROBE(trace_tcp_sendmsg,
+               struct sock *sk)
 {
-    return submit_event(EVENT_TCP_SENDMSG);
+    struct connection *conn;
+
+    conn = find_connection(sk);
+
+    if (!conn)
+        return submit_event(EVENT_TCP_SENDMSG);
+
+    return submit_event_ex(
+            EVENT_TCP_SENDMSG,
+
+            conn->saddr,
+            conn->daddr,
+
+            conn->sport,
+            conn->dport,
+
+            0,
+
+            0,
+
+            (__u64)sk,
+
+            6,
+
+            0,
+
+            0,
+
+            0);
 }
 
 /* ============================================================
@@ -401,10 +469,41 @@ int BPF_KPROBE(trace_tcp_write_xmit)
  */
 
 SEC("kprobe/ip_output")
-int BPF_KPROBE(trace_ip_output)
+int BPF_KPROBE(trace_ip_output,
+               struct net *net,
+               struct sock *sk)
 {
-    return submit_event(EVENT_IP_OUTPUT);
+    struct connection *conn;
+
+    conn = find_connection(sk);
+
+    if (!conn)
+        return submit_event(EVENT_IP_OUTPUT);
+
+    return submit_event_ex(
+            EVENT_IP_OUTPUT,
+
+            conn->saddr,
+            conn->daddr,
+
+            conn->sport,
+            conn->dport,
+
+            0,
+
+            0,
+
+            (__u64)sk,
+
+            6,
+
+            0,
+
+            0,
+
+            0);
 }
+
 
 /* ============================================================
  * NIC TX

@@ -73,3 +73,149 @@ int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)
 {
     return submit_event(EVENT_RECVFROM_ENTER);
 }
+
+/* ============================================================
+ * NIC Receive
+ * ============================================================
+ */
+
+SEC("tracepoint/net/netif_receive_skb")
+int trace_netif_receive_skb(struct trace_event_raw_net_dev_template *ctx)
+{
+    return submit_event(EVENT_NET_RX);
+}
+
+/* ============================================================
+ * IRQ
+ * ============================================================
+ */
+
+SEC("tracepoint/irq/irq_handler_entry")
+int trace_irq_handler_entry(struct trace_event_raw_irq_handler_entry *ctx)
+{
+    return submit_event(EVENT_IRQ_ENTRY);
+}
+
+/* ============================================================
+ * SoftIRQ
+ * ============================================================
+ */
+
+SEC("tracepoint/irq/softirq_entry")
+int trace_softirq_entry(struct trace_event_raw_softirq *ctx)
+{
+    if (ctx->vec != 3)
+        return 0;
+
+    return submit_event(EVENT_SOFTIRQ_ENTRY);
+}
+
+/* ============================================================
+ * IP Receive
+ * ============================================================
+ */
+
+SEC("kprobe/ip_rcv")
+int BPF_KPROBE(trace_ip_rcv)
+{
+    return submit_event(EVENT_IP_RCV);
+}
+
+/* ============================================================
+ * TCP Receive
+ * ============================================================
+ */
+
+SEC("kprobe/tcp_v4_rcv")
+int BPF_KPROBE(trace_tcp_v4_rcv)
+{
+    return submit_event(EVENT_TCP_V4_RCV);
+}
+
+/* ============================================================
+ * TCP Queue
+ * ============================================================
+ */
+
+SEC("kprobe/tcp_data_queue")
+int BPF_KPROBE(trace_tcp_data_queue)
+{
+    return submit_event(EVENT_TCP_DATA_QUEUE);
+}
+
+/* ============================================================
+ * Socket Readable
+ * ============================================================
+ */
+
+SEC("kprobe/sock_def_readable")
+int BPF_KPROBE(trace_sock_def_readable)
+{
+    return submit_event(EVENT_SOCK_DEF_READABLE);
+}
+
+/* ============================================================
+ * recvfrom()
+ * ============================================================
+ */
+
+SEC("tracepoint/syscalls/sys_enter_recvfrom")
+int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)
+{
+    return submit_event(EVENT_RECVFROM_ENTER);
+}
+
+/* ============================================================
+ * sendto()
+ * ============================================================
+ */
+
+SEC("tracepoint/syscalls/sys_enter_sendto")
+int trace_sendto_enter(struct trace_event_raw_sys_enter *ctx)
+{
+    return submit_event(EVENT_SENDTO_ENTER);
+}
+
+/* ============================================================
+ * TCP Send
+ * ============================================================
+ */
+
+SEC("kprobe/tcp_sendmsg")
+int BPF_KPROBE(trace_tcp_sendmsg)
+{
+    return submit_event(EVENT_TCP_SENDMSG);
+}
+
+/* ============================================================
+ * TCP Write
+ * ============================================================
+ */
+
+SEC("kprobe/tcp_write_xmit")
+int BPF_KPROBE(trace_tcp_write_xmit)
+{
+    return submit_event(EVENT_TCP_WRITE_XMIT);
+}
+
+/* ============================================================
+ * IP Output
+ * ============================================================
+ */
+
+SEC("kprobe/ip_output")
+int BPF_KPROBE(trace_ip_output)
+{
+    return submit_event(EVENT_IP_OUTPUT);
+}
+
+/* ============================================================
+ * NIC TX
+ * ============================================================
+ */
+
+SEC("tracepoint/net/net_dev_queue")
+int trace_net_dev_queue(struct trace_event_raw_net_dev_template *ctx)
+{
+    return submit_event(EVENT_NET_DEV_QUEUE);
+}

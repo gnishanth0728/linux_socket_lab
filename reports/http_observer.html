@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HTTP Observer Timeline</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    select { margin-bottom: 1rem; padding: 0.4rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
+    th { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <h1>HTTP Observer Timeline</h1>
+  <label for="layerFilter">Filter by layer:</label>
+  <select id="layerFilter" onchange="filterRows(this.value)">
+    <option value="all">All layers</option>
+    <option value="application">Application</option>
+    <option value="http">HTTP</option>
+    <option value="syscall">Syscall</option>
+    <option value="tcp">TCP</option>
+    <option value="socket">Socket</option>
+    <option value="kernel">Kernel</option>
+  </select>
+  <table>
+    <thead><tr><th>Layer</th><th>Name</th><th>Timestamp</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr class="application"><td>application</td><td>request-start</td><td>8394.378</td><td>Preparing request to http://127.0.0.1:18081/</td></tr><tr class="http"><td>http</td><td>response-received</td><td>8394.386</td><td>HTTP 200 &lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;observer-ok&lt;/body&gt;&lt;/html&gt;</td></tr><tr class="application"><td>application</td><td>response-body</td><td>8394.386</td><td>body-bytes=52 headers=5</td></tr><tr class="syscall"><td>syscall</td><td>socket</td><td>8394.396</td><td>socket() invoked</td></tr><tr class="syscall"><td>syscall</td><td>connect</td><td>8394.406</td><td>connect() invoked</td></tr><tr class="syscall"><td>syscall</td><td>send</td><td>8394.416</td><td>send() invoked</td></tr><tr class="syscall"><td>syscall</td><td>recv</td><td>8394.426</td><td>recv() invoked</td></tr><tr class="syscall"><td>syscall</td><td>close</td><td>8394.436</td><td>close() invoked</td></tr><tr class="tcp"><td>tcp</td><td>syn</td><td>8394.446</td><td>SYN packet observed</td></tr><tr class="tcp"><td>tcp</td><td>ack</td><td>8394.456</td><td>ACK packet observed</td></tr><tr class="tcp"><td>tcp</td><td>psh</td><td>8394.466</td><td>PSH packet observed</td></tr><tr class="tcp"><td>tcp</td><td>fin</td><td>8394.476</td><td>FIN packet observed</td></tr><tr class="http"><td>http</td><td>mitmproxy-request</td><td>8394.486</td><td>Captured request for http://127.0.0.1:18081/</td></tr><tr class="http"><td>http</td><td>mitmproxy-response</td><td>8394.496</td><td>Captured response body</td></tr><tr class="socket"><td>socket</td><td>closed</td><td>8394.506</td><td>CLOSED</td></tr><tr class="socket"><td>socket</td><td>syn-sent</td><td>8394.516</td><td>SYN_SENT</td></tr><tr class="socket"><td>socket</td><td>established</td><td>8394.526</td><td>ESTABLISHED</td></tr><tr class="socket"><td>socket</td><td>time-wait</td><td>8394.536</td><td>TIME_WAIT</td></tr><tr class="kernel"><td>kernel</td><td>tcp_sendmsg</td><td>8394.546</td><td>tcp_sendmsg traced</td></tr><tr class="kernel"><td>kernel</td><td>tcp_recvmsg</td><td>8394.556</td><td>tcp_recvmsg traced</td></tr><tr class="kernel"><td>kernel</td><td>ip_queue_xmit</td><td>8394.566</td><td>ip_queue_xmit traced</td></tr><tr class="kernel"><td>kernel</td><td>perf-sample</td><td>8394.576</td><td>perf sample captured</td></tr>
+    </tbody>
+  </table>
+  <script>
+    function filterRows(layer) {
+      const rows = document.querySelectorAll('tbody tr');
+      rows.forEach(row => {
+        if (layer === 'all' || row.className === layer) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+  </script>
+</body>
+</html>

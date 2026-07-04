@@ -72,22 +72,37 @@ static const char *event_name(unsigned int event)
  * Ring Buffer Callback
  * ============================================================
  */
-
+static void ipv4_to_string(uint32_t addr, char *buf)
+{
+    sprintf(buf,
+            "%u.%u.%u.%u",
+            addr & 0xff,
+            (addr >> 8) & 0xff,
+            (addr >> 16) & 0xff,
+            (addr >> 24) & 0xff);
+}
 
 static int handle_event(void *ctx, void *data, size_t size)
 {
     struct event *e = data;
 
-    printf("%-18" PRIu64 " %-6u %-4u %-16s %-20s "
-           "%08x:%u -> %08x:%u proto=%u len=%u\n",
-           e->timestamp,
+    char src[32];
+    char dst[32];
+
+    ipv4_to_string(e->saddr, src);
+    ipv4_to_string(e->daddr, dst);
+
+    printf("%-18llu %-6u %-4u %-16s %-20s\n",
+           (unsigned long long)e->timestamp,
            e->pid,
            e->cpu,
            e->comm,
-           event_name(e->event),
-           e->saddr,
+           event_name(e->event));
+
+    printf("    %s:%u -> %s:%u  proto=%u len=%u\n\n",
+           src,
            e->sport,
-           e->daddr,
+           dst,
            e->dport,
            e->protocol,
            e->packet_len);

@@ -7,6 +7,10 @@
 
 #include "event.bpf.h"
 
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/if_ether.h>
+
 char LICENSE[] SEC("license") = "GPL";
 
 /* ============================================================
@@ -19,6 +23,43 @@ struct
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
+
+static __always_inline int read_ipv4(
+    struct sk_buff *skb,
+    __u32 *saddr,
+    __u32 *daddr,
+    __u16 *len,
+    __u8 *proto)
+{
+    struct iphdr iph;
+
+    void *head;
+
+    __u16 network_header;
+
+    bpf_core_read(&head,
+                  sizeof(head),
+                  &skb->head);
+
+    bpf_core_read(&network_header,
+                  sizeof(network_header),
+                  &skb->network_header);
+
+    bpf_probe_read_kernel(
+        &iph,
+        sizeof(iph),
+        head + network_header);
+
+    *saddr = iph.saddr;
+
+    *daddr = iph.daddr;
+
+    *len = iph.tot_len;
+
+    *proto = iph.protocol;
+
+    return 0;
+}
 
 /* ============================================================
  * Helper
@@ -156,9 +197,35 @@ int BPF_KPROBE(trace_ip_rcv)
  */
 
 SEC("kprobe/tcp_v4_rcv")
-int BPF_KPROBE(trace_tcp_v4_rcv)
+int BPF_KPROBE(trace_tcp_v4_rcv,
+               struct sk_buff *skb)
 {
-    return submit_event(EVENT_TCP_V4_RCV);
+    __u32 saddr = 0;
+
+    __u32 daddr = 0;
+
+    __u16 len = 0;
+
+    __u8 proto = 0;
+
+    read_ipv4(
+        skb,
+        &saddr,
+        &daddr,
+        &len,
+        &proto);
+
+    return submit_event_ex(
+        EVENT_TCP_V4_RCV,
+        saddr,
+        daddr,
+        0,
+        0,
+        len,
+        proto,
+        0,
+        0,
+        0);
 }
 
 /* ============================================================

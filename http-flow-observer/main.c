@@ -130,12 +130,19 @@ int main(void)
     printf("HTTP FLOW OBSERVER\n");
     printf("===============================================\n\n");
 
-    printf("%-18s %-6s %-4s %-16s %-20s\n",
-           "Timestamp",
-           "PID",
-           "CPU",
-           "Process",
-           "Event");
+=.  printf("%-18llu %-6u %-4u %-16s %-20s "
+       "%08x:%u -> %08x:%u proto=%u len=%u\n",
+       e->timestamp,
+       e->pid,
+       e->cpu,
+       e->comm,
+       event_name(e->event),
+       e->saddr,
+       e->sport,
+       e->daddr,
+       e->dport,
+       e->protocol,
+       e->packet_len);
 
     while (running)
     {

@@ -9,60 +9,30 @@ enum event_type
 {
     EVENT_UNKNOWN = 0,
 
-    /* ==============================
-     * Network Receive
-     * ============================== */
-
     EVENT_NET_RX,
-
     EVENT_IRQ_ENTRY,
-
     EVENT_SOFTIRQ_ENTRY,
-
     EVENT_IP_RCV,
-
     EVENT_TCP_V4_RCV,
-
     EVENT_TCP_DATA_QUEUE,
-
     EVENT_SOCK_DEF_READABLE,
 
-    /* ==============================
-     * Socket
-     * ============================== */
-
     EVENT_ACCEPT4_ENTER,
-
     EVENT_ACCEPT4_EXIT,
-
     EVENT_RECVFROM_ENTER,
-
     EVENT_RECVFROM_EXIT,
-
     EVENT_SENDTO_ENTER,
-
     EVENT_SENDTO_EXIT,
 
-    /* ==============================
-     * Network Transmit
-     * ============================== */
-
     EVENT_TCP_SENDMSG,
-
     EVENT_TCP_WRITE_XMIT,
-
     EVENT_IP_OUTPUT,
-
     EVENT_NET_DEV_QUEUE
 };
 
 struct event
 {
-    /* Timestamp */
-
     uint64_t timestamp;
-
-    /* Process Information */
 
     uint32_t pid;
 
@@ -72,15 +42,27 @@ struct event
 
     uint32_t gid;
 
-    /* CPU */
-
     uint32_t cpu;
-
-    /* Event Type */
 
     uint32_t event;
 
-    /* Process Name */
+    uint32_t saddr;
+
+    uint32_t daddr;
+
+    uint16_t sport;
+
+    uint16_t dport;
+
+    uint16_t packet_len;
+
+    uint8_t protocol;
+
+    uint8_t tcp_flags;
+
+    uint32_t seq;
+
+    uint32_t ack_seq;
 
     char comm[TASK_COMM_LEN];
 };

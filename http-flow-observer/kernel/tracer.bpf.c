@@ -25,30 +25,55 @@ struct
  * ============================================================
  */
 
-static __always_inline int submit_event(__u32 type)
+static __always_inline int submit_event_ex(
+    __u32 type,
+    __u32 saddr,
+    __u32 daddr,
+    __u16 sport,
+    __u16 dport,
+    __u16 packet_len,
+    __u8 protocol,
+    __u8 tcp_flags,
+    __u32 seq,
+    __u32 ack_seq)
 {
     struct event *e;
 
     __u64 pid_tgid;
+    __u64 uid_gid;
 
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-
     if (!e)
         return 0;
 
     pid_tgid = bpf_get_current_pid_tgid();
+    uid_gid  = bpf_get_current_uid_gid();
 
     e->timestamp = bpf_ktime_get_ns();
 
     e->pid = pid_tgid >> 32;
     e->tid = (__u32)pid_tgid;
 
-    e->uid = 0;
-    e->gid = 0;
+    e->uid = (__u32)uid_gid;
+    e->gid = uid_gid >> 32;
 
     e->cpu = bpf_get_smp_processor_id();
 
     e->event = type;
+
+    e->saddr = saddr;
+    e->daddr = daddr;
+
+    e->sport = sport;
+    e->dport = dport;
+
+    e->packet_len = packet_len;
+
+    e->protocol = protocol;
+    e->tcp_flags = tcp_flags;
+
+    e->seq = seq;
+    e->ack_seq = ack_seq;
 
     bpf_get_current_comm(e->comm, sizeof(e->comm));
 
@@ -57,6 +82,20 @@ static __always_inline int submit_event(__u32 type)
     return 0;
 }
 
+static __always_inline int submit_event(__u32 type)
+{
+    return submit_event_ex(
+        type,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0);
+}
 
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)

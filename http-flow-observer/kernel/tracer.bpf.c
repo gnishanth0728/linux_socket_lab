@@ -57,16 +57,6 @@ static __always_inline int submit_event(__u32 type)
     return 0;
 }
 
-/* ============================================================
- * Test Probe
- * ============================================================
- */
-
-SEC("kprobe/tcp_v4_rcv")
-int BPF_KPROBE(trace_tcp_v4_rcv)
-{
-    return submit_event(EVENT_TCP_V4_RCV);
-}
 
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int trace_recvfrom_enter(struct trace_event_raw_sys_enter *ctx)

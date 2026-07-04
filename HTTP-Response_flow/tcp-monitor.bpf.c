@@ -21,7 +21,7 @@
  *      Ring Buffer
  * ============================================================================
  */
-
+#define __BPF__
 #include "vmlinux.h"
 #include "common.h"
 
@@ -72,7 +72,7 @@ reserve_event(void)
 static __always_inline void
 fill_process_info(struct tcp_event *event)
 {
-    event->timestamp = bpf_ktime_get_ns();
+    event->timestamp_ns = bpf_ktime_get_ns();
 
     event->pid =
         bpf_get_current_pid_tgid() >> 32;

@@ -107,6 +107,14 @@ http://localhost:8090/index.html
 The page auto-refreshes every second and shows the complete numbered step list
 for the latest request (kernel steps + JVM spans merged together).
 
+Playback controls in the UI:
+
+- `Next`: move one step forward in the current request timeline
+- `Previous`: move one step backward
+- `Reset`: jump back to STEP 1
+
+When a new request arrives, playback resets to STEP 1 for that request.
+
 ---
 
 ## Client — Send a request

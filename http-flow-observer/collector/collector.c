@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
 
 #include <bpf/libbpf.h>
 
@@ -12,6 +13,8 @@
 static volatile sig_atomic_t running = 1;
 
 static struct event_queue queue;
+
+static int verbose_events = 0;
 
 /* ============================================================
  * Event Name
@@ -114,13 +117,16 @@ int collector_handle_event(void *ctx, void *data, size_t len)
 
     event_queue_push(&queue, e);
 
-    printf("%-18llu %-6u %-6u %-4u %-20s %-20s\n",
-           (unsigned long long)e->timestamp,
-           e->pid,
-           e->tid,
-           e->cpu,
-           e->comm,
-           event_name(e->event));
+    if (verbose_events)
+    {
+        printf("%-18llu %-6u %-6u %-4u %-20s %-20s\n",
+               (unsigned long long)e->timestamp,
+               e->pid,
+               e->tid,
+               e->cpu,
+               e->comm,
+               event_name(e->event));
+    }
 
     return 0;
 }
@@ -157,8 +163,13 @@ static void signal_handler(int sig)
 
 int collector_run(struct ring_buffer *rb)
 {
+    const char *v;
+
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    v = getenv("HTTP_FLOW_VERBOSE_EVENTS");
+    verbose_events = (v && *v && v[0] != '0') ? 1 : 0;
 
     event_queue_init(&queue);
     connection_table_init();
@@ -166,15 +177,23 @@ int collector_run(struct ring_buffer *rb)
 
     printf("\n");
 
-    printf("%-18s %-6s %-6s %-4s %-20s %-20s\n",
-           "Timestamp(ns)",
-           "PID",
-           "TID",
-           "CPU",
-           "Process",
-           "Event");
+    if (verbose_events)
+    {
+        printf("%-18s %-6s %-6s %-4s %-20s %-20s\n",
+               "Timestamp(ns)",
+               "PID",
+               "TID",
+               "CPU",
+               "Process",
+               "Event");
 
-    printf("-------------------------------------------------------------------------------\n");
+        printf("-------------------------------------------------------------------------------\n");
+    }
+    else
+    {
+        printf("Request-centric mode enabled.\n");
+        printf("Set HTTP_FLOW_VERBOSE_EVENTS=1 to print raw event stream.\n\n");
+    }
 
     while (running)
     {

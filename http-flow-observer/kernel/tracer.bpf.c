@@ -24,7 +24,39 @@ struct
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
+/* ============================================================
+ * Connection Map
+ * ============================================================
+ */
 
+struct connection
+{
+    __u64 socket;
+
+    __u32 pid;
+
+    __u32 tid;
+
+    __u32 saddr;
+
+    __u32 daddr;
+
+    __u16 sport;
+
+    __u16 dport;
+};
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+
+    __uint(max_entries, 8192);
+
+    __type(key, __u64);
+
+    __type(value, struct connection);
+
+} connections SEC(".maps");
 
 /* ============================================================
  * Helper
@@ -123,6 +155,45 @@ static __always_inline int submit_event_ex(
     bpf_ringbuf_submit(e, 0);
 
     return 0;
+}
+
+static __always_inline void
+save_connection(struct sock *sk,
+                __u32 pid,
+                __u32 tid,
+                __u32 saddr,
+                __u32 daddr,
+                __u16 sport,
+                __u16 dport)
+{
+    struct connection conn = {};
+
+    __u64 key;
+
+    if (!sk)
+        return;
+
+    key = (__u64)sk;
+
+    conn.socket = key;
+
+    conn.pid = pid;
+
+    conn.tid = tid;
+
+    conn.saddr = saddr;
+
+    conn.daddr = daddr;
+
+    conn.sport = sport;
+
+    conn.dport = dport;
+
+    bpf_map_update_elem(
+            &connections,
+            &key,
+            &conn,
+            BPF_ANY);
 }
 
 static __always_inline int submit_event(__u32 type)
@@ -230,7 +301,19 @@ int BPF_KPROBE(trace_tcp_v4_rcv,
         &daddr,
         &sport,
         &dport);
+    __u64 pid_tgid;
 
+    pid_tgid = bpf_get_current_pid_tgid();
+
+    save_connection(
+            sk,
+            pid_tgid >> 32,
+            (__u32)pid_tgid,
+            saddr,
+            daddr,
+            sport,
+            dport);
+            
     return submit_event_ex(
         EVENT_TCP_V4_RCV,
 

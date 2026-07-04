@@ -5,6 +5,7 @@
 #include <bpf/libbpf.h>
 
 #include "kernel/tracer.skel.h"
+#include "collector/event.h"
 
 static volatile sig_atomic_t running = 1;
 
@@ -13,22 +14,7 @@ static volatile sig_atomic_t running = 1;
  * ============================================================
  */
 
-struct event
-{
-    unsigned long long timestamp;
 
-    unsigned int pid;
-    unsigned int tid;
-
-    unsigned int uid;
-    unsigned int gid;
-
-    unsigned int cpu;
-
-    unsigned int event;
-
-    char comm[16];
-};
 
 /* ============================================================
  * Event Names
@@ -56,12 +42,19 @@ static int handle_event(void *ctx, void *data, size_t size)
 {
     struct event *e = data;
 
-    printf("%-18llu %-6u %-4u %-16s %-20s\n",
+    printf("%-18llu %-6u %-4u %-16s %-20s "
+           "%08x:%u -> %08x:%u proto=%u len=%u\n",
            e->timestamp,
            e->pid,
            e->cpu,
            e->comm,
-           event_name(e->event));
+           event_name(e->event),
+           e->saddr,
+           e->sport,
+           e->daddr,
+           e->dport,
+           e->protocol,
+           e->packet_len);
 
     return 0;
 }
@@ -130,19 +123,15 @@ int main(void)
     printf("HTTP FLOW OBSERVER\n");
     printf("===============================================\n\n");
 
-    printf("%-18llu %-6u %-4u %-16s %-20s "
-       "%08x:%u -> %08x:%u proto=%u len=%u\n",
-       e->timestamp,
-       e->pid,
-       e->cpu,
-       e->comm,
-       event_name(e->event),
-       e->saddr,
-       e->sport,
-       e->daddr,
-       e->dport,
-       e->protocol,
-       e->packet_len);
+    printf("%-18s %-6s %-4s %-16s %-20s %-24s %-8s %-6s\n",
+       "Timestamp",
+       "PID",
+       "CPU",
+       "Process",
+       "Event",
+       "Source -> Destination",
+       "Proto",
+       "Len");
 
     while (running)
     {

@@ -367,11 +367,38 @@ int BPF_KPROBE(trace_tcp_v4_rcv,
  */
 
 SEC("kprobe/tcp_data_queue")
-int BPF_KPROBE(trace_tcp_data_queue)
+int BPF_KPROBE(trace_tcp_data_queue, struct sock *sk)
 {
-    return submit_event(EVENT_TCP_DATA_QUEUE);
-}
+    struct connection *conn;
 
+    conn = find_connection(sk);
+
+    if (!conn)
+        return submit_event(EVENT_TCP_DATA_QUEUE);
+
+    return submit_event_ex(
+        EVENT_TCP_DATA_QUEUE,
+
+        conn->saddr,
+        conn->daddr,
+
+        conn->sport,
+        conn->dport,
+
+        0,
+
+        0,
+
+        (__u64)sk,
+
+        6,
+
+        0,
+
+        0,
+
+        0);
+}
 /* ============================================================
  * Socket Readable
  * ============================================================

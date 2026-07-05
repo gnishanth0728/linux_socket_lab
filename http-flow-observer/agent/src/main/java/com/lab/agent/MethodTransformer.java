@@ -117,9 +117,16 @@ public final class MethodTransformer implements ClassFileTransformer {
 
     private static boolean isJdbcClass(String className) {
         return className.startsWith("org/postgresql/")
+                || className.startsWith("org/springframework/jdbc/")
                 || className.contains("/jdbc/")
                 || className.endsWith("Statement")
-                || className.endsWith("PreparedStatement");
+                || className.endsWith("PreparedStatement")
+                || className.endsWith("CallableStatement")
+                || className.endsWith("Connection");
+    }
+
+    private static boolean isHibernateClass(String className) {
+        return className.startsWith("org/hibernate/");
     }
 
     private static boolean isPoolClass(String className) {
@@ -142,6 +149,10 @@ public final class MethodTransformer implements ClassFileTransformer {
         }
 
         if (isPoolClass(className)) {
+            return true;
+        }
+
+        if (isHibernateClass(className)) {
             return true;
         }
 
@@ -174,6 +185,10 @@ public final class MethodTransformer implements ClassFileTransformer {
             return "CONNECTION_POOL";
         }
 
+        if (isHibernateClass(className) && isHibernateQueryMethod(className, methodName)) {
+            return "SQL_QUERY";
+        }
+
         if (!appPackage.isEmpty() && className.startsWith(appPackage)) {
             if ((access & Opcodes.ACC_ABSTRACT) != 0) {
                 return null;
@@ -195,18 +210,39 @@ public final class MethodTransformer implements ClassFileTransformer {
         }
 
         if (className.startsWith("org/postgresql/")
-                && (methodName.startsWith("prepare")
-                    || methodName.startsWith("exec")
-                    || methodName.startsWith("query"))) {
+                && isSqlMethod(methodName)) {
             return "POSTGRESQL";
         }
 
-        if (isJdbcClass(className)
-                && (methodName.startsWith("execute")
-                    || methodName.startsWith("prepare"))) {
+        if (isJdbcClass(className) && isSqlMethod(methodName)) {
             return "SQL_QUERY";
         }
 
         return null;
+    }
+
+    private static boolean isSqlMethod(String methodName) {
+        return methodName.startsWith("execute")
+                || methodName.startsWith("prepare")
+                || methodName.startsWith("query")
+                || methodName.startsWith("update")
+                || methodName.startsWith("batch")
+                || methodName.startsWith("call")
+                || methodName.startsWith("nativeQuery");
+    }
+
+    private static boolean isHibernateQueryMethod(String className, String methodName) {
+        if (className.contains("/loader/") || className.contains("/query/") || className.contains("/sql/")) {
+            return methodName.startsWith("execute")
+                    || methodName.startsWith("prepare")
+                    || methodName.startsWith("doQuery")
+                    || methodName.startsWith("list")
+                    || methodName.startsWith("scroll")
+                    || methodName.startsWith("perform")
+                    || methodName.startsWith("getResult")
+                    || methodName.startsWith("resolveSelect");
+        }
+
+        return false;
     }
 }

@@ -7,7 +7,10 @@ CLANG := clang
 BPFTOOL := bpftool
 
 CFLAGS := -O2 -g -Wall
-BPF_CFLAGS := -O2 -g -target bpf
+
+# Detect host arch and set the required __TARGET_ARCH_xxx macro for BPF kprobes.
+ARCH := $(shell uname -m | sed 's/x86_64/x86/;s/aarch64/arm64/;s/armv7l/arm/;s/s390x/s390/')
+BPF_CFLAGS := -O2 -g -target bpf -D__TARGET_ARCH_$(ARCH)
 
 LIBS := -lbpf -lelf -lz
 

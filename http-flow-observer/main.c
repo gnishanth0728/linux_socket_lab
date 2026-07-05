@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <bpf/libbpf.h>
 
@@ -14,6 +15,7 @@
 int main(void)
 {
     struct tracer_bpf *skel;
+    const char *nginx_bin = "/usr/sbin/nginx";
 
     struct ring_buffer *rb;
 
@@ -25,6 +27,21 @@ int main(void)
     {
         fprintf(stderr, "Failed to open skeleton\n");
         return 1;
+    }
+
+    /* Disable nginx uprobes when nginx is not present at the hardcoded path,
+     * so core kernel tracing can still run. */
+    if (access(nginx_bin, F_OK) != 0)
+    {
+        bpf_program__set_autoload(skel->progs.uprobe_ngx_http_process_request_line, false);
+        bpf_program__set_autoload(skel->progs.uprobe_ngx_http_upstream_init_request, false);
+        bpf_program__set_autoload(skel->progs.uprobe_ngx_http_upstream_send_request, false);
+        bpf_program__set_autoload(skel->progs.uprobe_ngx_http_finalize_request, false);
+        bpf_program__set_autoload(skel->progs.uprobe_ngx_http_writer, false);
+
+        fprintf(stderr,
+                "[http-flow-observer] nginx binary not found at %s; nginx uprobes disabled\n",
+                nginx_bin);
     }
 
     if (tracer_bpf__load(skel))

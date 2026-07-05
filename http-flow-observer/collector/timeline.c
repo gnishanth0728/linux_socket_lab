@@ -223,6 +223,33 @@ static void ip_to_str(uint32_t addr, char *buf)
             (addr >> 24) & 0xff);
 }
 
+static void normalize_client_server(uint32_t *sa,
+                                    uint32_t *da,
+                                    uint16_t *sp,
+                                    uint16_t *dp)
+{
+    int port = 80;
+    const char *p = getenv("HTTP_FLOW_PORT");
+
+    if (p && *p)
+    {
+        int v = atoi(p);
+        if (v > 0 && v <= 65535)
+            port = v;
+    }
+
+    /* Keep server endpoint on configured app port when possible. */
+    if (*sp == (uint16_t)port && *dp != (uint16_t)port)
+    {
+        uint32_t tsa = *sa;
+        uint16_t tsp = *sp;
+        *sa = *da;
+        *da = tsa;
+        *sp = *dp;
+        *dp = tsp;
+    }
+}
+
 static uint64_t timeline_total_ns(const struct timeline *tl)
 {
     if (!tl || tl->count < 2)
@@ -345,6 +372,162 @@ static const char *seq_actor(uint32_t event)
         default:
             return "KERNEL";
     }
+}
+
+struct jvm_step
+{
+    char section[32];
+    char desc[96];
+    char stage[48];
+    char process[48];
+    char sql[180];
+    double duration_us;
+    int has_sql;
+};
+
+static int read_last_nonempty_line(const char *path, char *out, size_t out_len)
+{
+    FILE *f;
+    char line[8192];
+    int found = 0;
+
+    if (!out || out_len == 0)
+        return 0;
+
+    out[0] = '\0';
+    f = fopen(path, "r");
+    if (!f)
+        return 0;
+
+    while (fgets(line, sizeof(line), f))
+    {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' ' || line[len - 1] == '\t'))
+            line[--len] = '\0';
+
+        if (len == 0)
+            continue;
+
+        strncpy(out, line, out_len - 1);
+        out[out_len - 1] = '\0';
+        found = 1;
+    }
+
+    fclose(f);
+    return found;
+}
+
+static int json_extract_string(const char *obj, const char *key_prefix, char *out, size_t out_len)
+{
+    const char *p;
+    size_t i = 0;
+
+    if (!obj || !key_prefix || !out || out_len == 0)
+        return 0;
+
+    p = strstr(obj, key_prefix);
+    if (!p)
+        return 0;
+
+    p += strlen(key_prefix);
+    while (*p && *p != '"' && i + 1 < out_len)
+    {
+        if (*p == '\\' && p[1])
+            p++;
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return 1;
+}
+
+static int json_extract_double(const char *obj, const char *key_prefix, double *val)
+{
+    const char *p;
+    char *endptr;
+
+    if (!obj || !key_prefix || !val)
+        return 0;
+
+    p = strstr(obj, key_prefix);
+    if (!p)
+        return 0;
+
+    p += strlen(key_prefix);
+    *val = strtod(p, &endptr);
+    if (endptr == p)
+        return 0;
+
+    return 1;
+}
+
+static int parse_latest_jvm_steps(struct jvm_step *steps,
+                                  unsigned int max_steps,
+                                  unsigned int *out_count,
+                                  double *spring_us,
+                                  double *db_us)
+{
+    char line[65536];
+    const char *p;
+    unsigned int count = 0;
+
+    if (out_count)
+        *out_count = 0;
+    if (spring_us)
+        *spring_us = 0.0;
+    if (db_us)
+        *db_us = 0.0;
+
+    if (!steps || max_steps == 0)
+        return 0;
+
+    if (!read_last_nonempty_line(OUTPUT_DIR "/merged_requests.jsonl", line, sizeof(line)))
+        return 0;
+
+    p = line;
+    while ((p = strchr(p, '{')) != NULL)
+    {
+        const char *end = strchr(p, '}');
+        char obj[1024];
+        size_t len;
+
+        if (!end)
+            break;
+
+        len = (size_t)(end - p + 1);
+        if (len >= sizeof(obj))
+            len = sizeof(obj) - 1;
+
+        memcpy(obj, p, len);
+        obj[len] = '\0';
+
+        if (strstr(obj, "\"layer\":\"jvm\"") && count < max_steps)
+        {
+            struct jvm_step *s = &steps[count];
+            memset(s, 0, sizeof(*s));
+
+            json_extract_string(obj, "\"section\":\"", s->section, sizeof(s->section));
+            json_extract_string(obj, "\"desc\":\"", s->desc, sizeof(s->desc));
+            json_extract_string(obj, "\"stage\":\"", s->stage, sizeof(s->stage));
+            json_extract_string(obj, "\"process\":\"", s->process, sizeof(s->process));
+            json_extract_double(obj, "\"duration_us\":", &s->duration_us);
+            if (json_extract_string(obj, "\"sql\":\"", s->sql, sizeof(s->sql)))
+                s->has_sql = 1;
+
+            if (spring_us && strcmp(s->section, "Application") == 0)
+                *spring_us += s->duration_us;
+            if (db_us && strcmp(s->section, "Database") == 0)
+                *db_us += s->duration_us;
+
+            count++;
+        }
+
+        p = end + 1;
+    }
+
+    if (out_count)
+        *out_count = count;
+
+    return count > 0;
 }
 
 /* ============================================================
@@ -751,6 +934,10 @@ static void write_kernel_request_file(const struct timeline *tl)
     unsigned int i;
     char src[32];
     char dst[32];
+    uint32_t sa;
+    uint32_t da;
+    uint16_t sp;
+    uint16_t dp;
     uint64_t total_ns;
     const struct event *first;
 
@@ -762,12 +949,17 @@ static void write_kernel_request_file(const struct timeline *tl)
         return;
 
     first = &tl->entries[0].e;
-    ip_to_str(first->saddr, src);
-    ip_to_str(first->daddr, dst);
+    sa = first->saddr;
+    da = first->daddr;
+    sp = first->sport;
+    dp = first->dport;
+    normalize_client_server(&sa, &da, &sp, &dp);
+    ip_to_str(sa, src);
+    ip_to_str(da, dst);
     total_ns = timeline_total_ns(tl);
 
-    fprintf(f, "CLIENT|%s:%u\n", src, first->sport);
-    fprintf(f, "SERVER|%s:%u\n", dst, first->dport);
+    fprintf(f, "CLIENT|%s:%u\n", src, sp);
+    fprintf(f, "SERVER|%s:%u\n", dst, dp);
     fprintf(f, "SOCKET|0x%llx\n", (unsigned long long)tl->socket);
     fprintf(f, "PROCESS|%s|%u\n", first->comm, first->pid);
 
@@ -934,6 +1126,7 @@ void timeline_print(uint64_t socket)
     char dst[32];
     uint32_t sa = 0, da = 0;
     uint16_t sp = 0, dp = 0;
+    const struct event *proc_ev = NULL;
     const char *comm;
     struct utsname uts = {0};
     struct timespec ts;
@@ -941,6 +1134,8 @@ void timeline_print(uint64_t socket)
     char tbuf[64] = "?";
     double nic_us = 0.0, ipv4_us = 0.0, tcp_us = 0.0, socket_us = 0.0;
     double sched_us = 0.0, nginx_us = 0.0, spring_us = 0.0, postgres_us = 0.0, tx_us = 0.0;
+    struct jvm_step jvm_steps[64];
+    unsigned int jvm_count = 0;
     int has_network = 0, has_tcp = 0, has_socket = 0, has_sched = 0, has_nginx = 0, has_resp = 0;
     unsigned int first_cpu = 0;
 
@@ -961,7 +1156,21 @@ void timeline_print(uint64_t socket)
 
     ip_to_str(sa, src);
     ip_to_str(da, dst);
-    comm = tl->entries[0].e.comm;
+    normalize_client_server(&sa, &da, &sp, &dp);
+    ip_to_str(sa, src);
+    ip_to_str(da, dst);
+
+    proc_ev = &tl->entries[0].e;
+    for (i = 0; i < tl->count; i++)
+    {
+        const struct event *ev = &tl->entries[i].e;
+        if (ev->pid > 0 && ev->comm[0] && strcmp(ev->comm, "swapper/0") != 0)
+        {
+            proc_ev = ev;
+            break;
+        }
+    }
+    comm = proc_ev->comm;
     first_cpu = tl->entries[0].e.cpu;
 
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0)
@@ -973,6 +1182,12 @@ void timeline_print(uint64_t socket)
     if (tl->count > 1)
         total = tl->entries[tl->count - 1].e.timestamp
               - tl->entries[0].e.timestamp;
+
+    parse_latest_jvm_steps(jvm_steps,
+                           sizeof(jvm_steps) / sizeof(jvm_steps[0]),
+                           &jvm_count,
+                           &spring_us,
+                           &postgres_us);
 
     for (i = 0; i < tl->count; i++)
     {
@@ -1070,8 +1285,8 @@ void timeline_print(uint64_t socket)
     printf("IP            : %s\n", dst);
     printf("Port          : %u\n", dp);
     printf("Process       : %s\n", (comm && comm[0]) ? comm : "?");
-    printf("PID           : %u\n", tl->entries[0].e.pid);
-    printf("Thread        : %u\n\n", tl->entries[0].e.tid);
+    printf("PID           : %u\n", proc_ev->pid);
+    printf("Thread        : %u\n\n", proc_ev->tid);
     printf("Socket\n");
     printf("------\n");
     printf("Socket Addr   : 0x%llx\n", (unsigned long long)socket);
@@ -1103,6 +1318,7 @@ void timeline_print(uint64_t socket)
         const struct event *ev = &te->e;
         if (event_section(ev->event) && strcmp(event_section(ev->event), "Network layer") == 0)
         {
+            has_network = 1;
             printf("+ %s\n", event_desc(ev->event));
             printf("      Event          : %s\n", event_name(ev->event));
             printf("      Process        : %s (pid=%u cpu=%u)\n", (ev->comm[0] ? ev->comm : "?"), ev->pid, ev->cpu);
@@ -1197,12 +1413,59 @@ void timeline_print(uint64_t socket)
     printf("=========================================================================================\n");
     printf("SPRING BOOT\n");
     printf("=========================================================================================\n\n");
-    printf("(captured in Java agent output when agent is attached)\n\n");
+
+    if (jvm_count > 0)
+    {
+        int printed = 0;
+        for (i = 0; i < jvm_count; i++)
+        {
+            if (strcmp(jvm_steps[i].section, "Application") != 0)
+                continue;
+
+            printed = 1;
+            printf("+ %s\n", jvm_steps[i].desc[0] ? jvm_steps[i].desc : "Spring stage");
+            printf("      Stage          : %s\n", jvm_steps[i].stage[0] ? jvm_steps[i].stage : "APP");
+            printf("      Process        : %s\n", jvm_steps[i].process[0] ? jvm_steps[i].process : "jvm-thread");
+            printf("      Timing         : %.3f us\n\n", jvm_steps[i].duration_us);
+        }
+
+        if (!printed)
+            printf("(no application JVM spans in latest merged request)\n\n");
+    }
+    else
+    {
+        printf("(no merged JVM request found; ensure Java agent is attached and writing merged_requests.jsonl)\n\n");
+    }
 
     printf("=========================================================================================\n");
     printf("DATABASE\n");
     printf("=========================================================================================\n\n");
-    printf("(captured in Java agent output when JDBC spans are present)\n\n");
+
+    if (jvm_count > 0)
+    {
+        int printed = 0;
+        for (i = 0; i < jvm_count; i++)
+        {
+            if (strcmp(jvm_steps[i].section, "Database") != 0)
+                continue;
+
+            printed = 1;
+            printf("+ %s\n", jvm_steps[i].desc[0] ? jvm_steps[i].desc : "Database stage");
+            printf("      Stage          : %s\n", jvm_steps[i].stage[0] ? jvm_steps[i].stage : "SQL");
+            printf("      Process        : %s\n", jvm_steps[i].process[0] ? jvm_steps[i].process : "jvm-thread");
+            printf("      Timing         : %.3f us\n", jvm_steps[i].duration_us);
+            if (jvm_steps[i].has_sql)
+                printf("      SQL            : %s\n", jvm_steps[i].sql);
+            printf("\n");
+        }
+
+        if (!printed)
+            printf("(no JDBC spans in latest merged request)\n\n");
+    }
+    else
+    {
+        printf("(no merged JVM request found; ensure Java agent is attached and writing merged_requests.jsonl)\n\n");
+    }
 
     printf("=========================================================================================\n");
     printf("HTTP RESPONSE\n");

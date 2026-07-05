@@ -12,6 +12,9 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.commons.AdviceAdapter;
 
 public final class MethodTransformer implements ClassFileTransformer {
+    private static final String JAVAX_HTTP_REQUEST = "javax/servlet/http/HttpServletRequest";
+    private static final String JAKARTA_HTTP_REQUEST = "jakarta/servlet/http/HttpServletRequest";
+
     private final String appPackage;
 
     public MethodTransformer(String appPackage) {
@@ -82,9 +85,14 @@ public final class MethodTransformer implements ClassFileTransformer {
                             // Capture request URI for merged request-centric view.
                             // DispatcherServlet.doDispatch(HttpServletRequest, HttpServletResponse)
                             if ("SPRING_MVC".equals(stage) && "doDispatch".equals(name)) {
+                                String requestType = requestInterfaceFor(descriptor);
+                                if (requestType == null) {
+                                    return;
+                                }
+
                                 loadArg(0);
                                 visitMethodInsn(INVOKEINTERFACE,
-                                        "javax/servlet/http/HttpServletRequest",
+                                        requestType,
                                         "getRequestURI",
                                         "()Ljava/lang/String;",
                                         true);
@@ -96,7 +104,7 @@ public final class MethodTransformer implements ClassFileTransformer {
 
                                 loadArg(0);
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getMethod",
                                     "()Ljava/lang/String;",
                                     true);
@@ -108,7 +116,7 @@ public final class MethodTransformer implements ClassFileTransformer {
 
                                 loadArg(0);
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getProtocol",
                                     "()Ljava/lang/String;",
                                     true);
@@ -121,7 +129,7 @@ public final class MethodTransformer implements ClassFileTransformer {
                                 loadArg(0);
                                 visitLdcInsn("Host");
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getHeader",
                                     "(Ljava/lang/String;)Ljava/lang/String;",
                                     true);
@@ -134,7 +142,7 @@ public final class MethodTransformer implements ClassFileTransformer {
                                 loadArg(0);
                                 visitLdcInsn("User-Agent");
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getHeader",
                                     "(Ljava/lang/String;)Ljava/lang/String;",
                                     true);
@@ -147,7 +155,7 @@ public final class MethodTransformer implements ClassFileTransformer {
                                 loadArg(0);
                                 visitLdcInsn("Accept");
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getHeader",
                                     "(Ljava/lang/String;)Ljava/lang/String;",
                                     true);
@@ -160,7 +168,7 @@ public final class MethodTransformer implements ClassFileTransformer {
                                 loadArg(0);
                                 visitLdcInsn("Connection");
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getHeader",
                                     "(Ljava/lang/String;)Ljava/lang/String;",
                                     true);
@@ -172,7 +180,7 @@ public final class MethodTransformer implements ClassFileTransformer {
 
                                 loadArg(0);
                                 visitMethodInsn(INVOKEINTERFACE,
-                                    "javax/servlet/http/HttpServletRequest",
+                                    requestType,
                                     "getContentLengthLong",
                                     "()J",
                                     true);
@@ -208,7 +216,24 @@ public final class MethodTransformer implements ClassFileTransformer {
         }
     }
 
-    private boolean shouldInstrumentClass(String className) {
+    private static boolean isJdbcClass(String className) {
+        return className.startsWith("org/postgresql/")
+                || className.contains("/jdbc/")
+                || className.endsWith("Statement")
+                || className.endsWith("PreparedStatement");
+    }
+
+    private static boolean isPoolClass(String className) {
+        return className.startsWith("com/zaxxer/hikari/")
+                || className.startsWith("org/apache/tomcat/jdbc/pool/")
+                || className.startsWith("org/apache/commons/dbcp2/");
+    }
+
+    boolean shouldInstrumentClass(String className) {
+        if (className == null) {
+            return false;
+        }
+
         if ("org/apache/catalina/core/StandardWrapperValve".equals(className)) {
             return true;
         }
@@ -226,19 +251,6 @@ public final class MethodTransformer implements ClassFileTransformer {
         }
 
         return isJdbcClass(className);
-    }
-
-    private static boolean isJdbcClass(String className) {
-        return className.startsWith("org/postgresql/")
-                || className.contains("/jdbc/")
-                || className.endsWith("Statement")
-                || className.endsWith("PreparedStatement");
-    }
-
-    private static boolean isPoolClass(String className) {
-        return className.startsWith("com/zaxxer/hikari/")
-                || className.startsWith("org/apache/tomcat/jdbc/pool/")
-                || className.startsWith("org/apache/commons/dbcp2/");
     }
 
     private String stageFor(String className, String methodName, String descriptor, int access) {
@@ -296,6 +308,16 @@ public final class MethodTransformer implements ClassFileTransformer {
             return "SQL_QUERY";
         }
 
+        return null;
+    }
+
+    private static String requestInterfaceFor(String descriptor) {
+        if (descriptor.contains("L" + JAKARTA_HTTP_REQUEST + ";")) {
+            return JAKARTA_HTTP_REQUEST;
+        }
+        if (descriptor.contains("L" + JAVAX_HTTP_REQUEST + ";")) {
+            return JAVAX_HTTP_REQUEST;
+        }
         return null;
     }
 }

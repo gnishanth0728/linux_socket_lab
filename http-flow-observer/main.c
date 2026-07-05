@@ -15,8 +15,9 @@
 int main(void)
 {
     struct tracer_bpf *skel;
-    const char *nginx_bin = "/usr/sbin/nginx";
+    const char *nginx_bin;
     const char *experimental_probes;
+    const char *nginx_env;
     int enable_experimental_probes = 0;
 
     struct ring_buffer *rb;
@@ -31,6 +32,9 @@ int main(void)
         return 1;
     }
 
+    nginx_env = getenv("HTTP_FLOW_NGINX_BIN");
+    nginx_bin = (nginx_env && *nginx_env) ? nginx_env : "/usr/sbin/nginx";
+
     /* Disable nginx uprobes when nginx is not present at the hardcoded path,
      * so core kernel tracing can still run. */
     if (access(nginx_bin, F_OK) != 0)
@@ -42,7 +46,7 @@ int main(void)
         bpf_program__set_autoload(skel->progs.uprobe_ngx_http_writer, false);
 
         fprintf(stderr,
-                "[http-flow-observer] nginx binary not found at %s; nginx uprobes disabled\n",
+            "[http-flow-observer] nginx binary not found at %s; nginx uprobes disabled (set HTTP_FLOW_NGINX_BIN)\n",
                 nginx_bin);
     }
 

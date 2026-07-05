@@ -165,6 +165,52 @@ static const char *event_desc(uint32_t event)
     }
 }
 
+static const char *event_section(uint32_t event)
+{
+    switch (event)
+    {
+        case EVENT_NET_RX:
+        case EVENT_NAPI_POLL:
+        case EVENT_ETHERNET_RX:
+        case EVENT_IRQ_ENTRY:
+        case EVENT_SOFTIRQ_ENTRY:
+        case EVENT_IP_RCV:
+        case EVENT_NETFILTER_HOOK:
+        case EVENT_ROUTE_LOOKUP:
+        case EVENT_TCP_V4_RCV:
+        case EVENT_TCP_STATE_MACHINE:
+            return "Network layer";
+
+        case EVENT_TCP_DATA_QUEUE:
+        case EVENT_SOCK_DEF_READABLE:
+        case EVENT_SCHED_WAKEUP:
+        case EVENT_SCHED_SWITCH:
+        case EVENT_RECVFROM_ENTER:
+        case EVENT_RECVFROM_EXIT:
+            return "Kernel socket layer";
+
+        case EVENT_ACCEPT4_ENTER:
+        case EVENT_ACCEPT4_EXIT:
+        case EVENT_NGINX_HTTP_PARSE:
+        case EVENT_NGINX_REVERSE_PROXY:
+        case EVENT_NGINX_BACKEND_SOCKET:
+            return "Web server";
+
+        case EVENT_NGINX_RESPONSE_GEN:
+        case EVENT_NGINX_RESPONSE_TX:
+        case EVENT_SENDTO_ENTER:
+        case EVENT_SENDTO_EXIT:
+        case EVENT_TCP_SENDMSG:
+        case EVENT_TCP_WRITE_XMIT:
+        case EVENT_IP_OUTPUT:
+        case EVENT_NET_DEV_QUEUE:
+            return "Response path";
+
+        default:
+            return "Kernel socket layer";
+    }
+}
+
 static void ip_to_str(uint32_t addr, char *buf)
 {
     sprintf(buf,
@@ -585,6 +631,9 @@ static void write_ui_html(void)
             "        const badge = s.layer === 'kernel'\n"
             "          ? '<span class=\\\"badge-k\\\">KERNEL</span>'\n"
             "          : '<span class=\\\"badge-j\\\">JVM</span>';\n"
+            "        const section = s.section\n"
+            "          ? '<span style=\\\"color:#fcd34d;margin-right:6px\\\">[' + s.section + ']</span>'\n"
+            "          : '';\n"
             "        const timing = s.layer === 'kernel'\n"
             "          ? (safeNum(s.delta_us) > 0 ? '+' + safeNum(s.delta_us).toFixed(3) + ' us' : 'start')\n"
             "          : safeNum(s.duration_us).toFixed(3) + ' us';\n"
@@ -597,7 +646,7 @@ static void write_ui_html(void)
             "        return '<div class=\\\"' + cls + '\\\">'\n"
             "          + '<div class=\\\"snum\\\">' + s.n + '</div>'\n"
             "          + '<div class=\\\"sdetail\\\">'\n"
-            "          + '<div class=\\\"sdesc\\\">' + badge + s.desc + '</div>'\n"
+            "          + '<div class=\\\"sdesc\\\">' + section + badge + s.desc + '</div>'\n"
             "          + '<div class=\\\"smeta\\\">' + (s.method || s.stage) + '&nbsp;&nbsp;' + timing + sql + '</div>'\n"
             "          + '</div></div>';\n"
             "      }).join('');\n"
@@ -684,7 +733,8 @@ static void export_build6_artifacts(const struct timeline *tl)
  *   CLIENT|<ip>:<port>
  *   SERVER|<ip>:<port>
  *   SOCKET|0x<hex>
- *   STEP|<n>|<event_name>|<description>|<delta_ns>
+ *   PROCESS|<comm>|<pid>
+ *   STEP|<n>|<event_name>|<description>|<delta_ns>|<comm>|<pid>|<cpu>
  *   ...
  *   TOTAL_NS|<total>
  *   COUNT|<n>
@@ -717,16 +767,20 @@ static void write_kernel_request_file(const struct timeline *tl)
     fprintf(f, "CLIENT|%s:%u\n", src, first->sport);
     fprintf(f, "SERVER|%s:%u\n", dst, first->dport);
     fprintf(f, "SOCKET|0x%llx\n", (unsigned long long)tl->socket);
+    fprintf(f, "PROCESS|%s|%u\n", first->comm, first->pid);
 
     for (i = 0; i < tl->count; i++)
     {
         const struct timeline_entry *te = &tl->entries[i];
 
-        fprintf(f, "STEP|%u|%s|%s|%llu\n",
+        fprintf(f, "STEP|%u|%s|%s|%llu|%s|%u|%u\n",
                 i + 1,
                 event_name(te->e.event),
                 event_desc(te->e.event),
-                (unsigned long long)te->delta_ns);
+            (unsigned long long)te->delta_ns,
+            te->e.comm,
+            te->e.pid,
+            te->e.cpu);
     }
 
     fprintf(f, "TOTAL_NS|%llu\n", (unsigned long long)total_ns);
@@ -879,6 +933,7 @@ void timeline_print(uint64_t socket)
     uint32_t sa = 0, da = 0;
     uint16_t sp = 0, dp = 0;
     const char *comm;
+    const char *last_section = NULL;
 
     if (!tl || tl->count == 0)
         return;
@@ -913,6 +968,13 @@ void timeline_print(uint64_t socket)
     {
         const struct timeline_entry *te = &tl->entries[i];
         const struct event *ev = &te->e;
+        const char *section = event_section(ev->event);
+
+        if (!last_section || strcmp(last_section, section) != 0)
+        {
+            printf("[%s]\n", section);
+            last_section = section;
+        }
 
         if (i == 0)
             printf("[✓] STEP %-2u  %-38s\n",

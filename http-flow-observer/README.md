@@ -105,7 +105,14 @@ http://localhost:8090/index.html
 ```
 
 The page auto-refreshes every second and shows the complete numbered step list
-for the latest request (kernel steps + JVM spans merged together).
+for the latest request (kernel steps + JVM spans merged together), grouped into:
+
+- Network layer
+- Kernel socket layer
+- Web server
+- Application
+- Database
+- Response path
 
 Playback controls in the UI:
 
@@ -221,3 +228,5 @@ All written to `output/` next to the observer binary:
 - If `make` fails with `bpftool: not found`, install `bpftool` and retry.
 - If BTF generation fails, ensure `/sys/kernel/btf/vmlinux` exists.
 - Set `HTTP_FLOW_OUTPUT_DIR=/path/to/dir` to change where output files are written.
+- Set `HTTP_FLOW_NGINX_BIN=/path/to/nginx` when nginx is not at `/usr/sbin/nginx`.
+- Set `HTTP_FLOW_EXPERIMENTAL_PROBES=1` to enable deep kernel hooks (NAPI/Ethernet/Netfilter/Routing) on kernels that support them.

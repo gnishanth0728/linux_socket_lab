@@ -16,6 +16,8 @@ int main(void)
 {
     struct tracer_bpf *skel;
     const char *nginx_bin = "/usr/sbin/nginx";
+    const char *experimental_probes;
+    int enable_experimental_probes = 0;
 
     struct ring_buffer *rb;
 
@@ -42,6 +44,23 @@ int main(void)
         fprintf(stderr,
                 "[http-flow-observer] nginx binary not found at %s; nginx uprobes disabled\n",
                 nginx_bin);
+    }
+
+    experimental_probes = getenv("HTTP_FLOW_EXPERIMENTAL_PROBES");
+    if (experimental_probes && *experimental_probes && experimental_probes[0] != '0')
+        enable_experimental_probes = 1;
+
+    /* Some deep kernel hooks are not available on all kernels/distros.
+     * Keep them optional so the observer can attach portably. */
+    if (!enable_experimental_probes)
+    {
+        bpf_program__set_autoload(skel->progs.trace_napi_gro_receive, false);
+        bpf_program__set_autoload(skel->progs.trace_eth_type_trans, false);
+        bpf_program__set_autoload(skel->progs.trace_nf_hook_slow, false);
+        bpf_program__set_autoload(skel->progs.trace_ip_route_input_noref, false);
+
+        fprintf(stderr,
+                "[http-flow-observer] experimental deep-kernel probes disabled (set HTTP_FLOW_EXPERIMENTAL_PROBES=1 to enable)\n");
     }
 
     if (tracer_bpf__load(skel))

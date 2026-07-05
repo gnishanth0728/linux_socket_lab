@@ -29,6 +29,12 @@ static const char *event_name(__u32 event)
         case EVENT_NET_RX:
             return "NET_RX";
 
+        case EVENT_NAPI_POLL:
+            return "NAPI_POLL";
+
+        case EVENT_ETHERNET_RX:
+            return "ETHERNET_RX";
+
         case EVENT_IRQ_ENTRY:
             return "IRQ_ENTRY";
 
@@ -38,14 +44,44 @@ static const char *event_name(__u32 event)
         case EVENT_IP_RCV:
             return "IP_RCV";
 
+        case EVENT_NETFILTER_HOOK:
+            return "NETFILTER_HOOK";
+
+        case EVENT_ROUTE_LOOKUP:
+            return "ROUTE_LOOKUP";
+
         case EVENT_TCP_V4_RCV:
             return "TCP_V4_RCV";
+
+        case EVENT_TCP_STATE_MACHINE:
+            return "TCP_STATE_MACHINE";
 
         case EVENT_TCP_DATA_QUEUE:
             return "TCP_DATA_QUEUE";
 
         case EVENT_SOCK_DEF_READABLE:
             return "SOCK_DEF_READABLE";
+
+        case EVENT_SCHED_WAKEUP:
+            return "SCHED_WAKEUP";
+
+        case EVENT_SCHED_SWITCH:
+            return "SCHED_SWITCH";
+
+        case EVENT_NGINX_HTTP_PARSE:
+            return "NGINX_HTTP_PARSE";
+
+        case EVENT_NGINX_REVERSE_PROXY:
+            return "NGINX_REVERSE_PROXY";
+
+        case EVENT_NGINX_BACKEND_SOCKET:
+            return "NGINX_BACKEND_SOCKET";
+
+        case EVENT_NGINX_RESPONSE_GEN:
+            return "NGINX_RESPONSE_GEN";
+
+        case EVENT_NGINX_RESPONSE_TX:
+            return "NGINX_RESPONSE_TX";
 
         case EVENT_ACCEPT4_ENTER:
             return "ACCEPT4_ENTER";

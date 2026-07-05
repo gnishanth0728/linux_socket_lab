@@ -96,12 +96,24 @@ static const char *event_name(uint32_t event)
     switch (event)
     {
         case EVENT_NET_RX:            return "NET_RX";
+        case EVENT_NAPI_POLL:         return "NAPI_POLL";
+        case EVENT_ETHERNET_RX:       return "ETHERNET_RX";
         case EVENT_IRQ_ENTRY:         return "IRQ_ENTRY";
         case EVENT_SOFTIRQ_ENTRY:     return "SOFTIRQ_ENTRY";
         case EVENT_IP_RCV:            return "IP_RCV";
+        case EVENT_NETFILTER_HOOK:    return "NETFILTER_HOOK";
+        case EVENT_ROUTE_LOOKUP:      return "ROUTE_LOOKUP";
         case EVENT_TCP_V4_RCV:        return "TCP_V4_RCV";
+        case EVENT_TCP_STATE_MACHINE: return "TCP_STATE_MACHINE";
         case EVENT_TCP_DATA_QUEUE:    return "TCP_DATA_QUEUE";
         case EVENT_SOCK_DEF_READABLE: return "SOCK_READABLE";
+        case EVENT_SCHED_WAKEUP:      return "SCHED_WAKEUP";
+        case EVENT_SCHED_SWITCH:      return "SCHED_SWITCH";
+        case EVENT_NGINX_HTTP_PARSE:  return "NGINX_HTTP_PARSE";
+        case EVENT_NGINX_REVERSE_PROXY:return "NGINX_REVERSE_PROXY";
+        case EVENT_NGINX_BACKEND_SOCKET:return "NGINX_BACKEND_SOCKET";
+        case EVENT_NGINX_RESPONSE_GEN:return "NGINX_RESPONSE_GEN";
+        case EVENT_NGINX_RESPONSE_TX: return "NGINX_RESPONSE_TX";
         case EVENT_ACCEPT4_ENTER:     return "ACCEPT4_ENTER";
         case EVENT_ACCEPT4_EXIT:      return "ACCEPT4_EXIT";
         case EVENT_RECVFROM_ENTER:    return "RECVFROM_ENTER";
@@ -121,12 +133,24 @@ static const char *event_desc(uint32_t event)
     switch (event)
     {
         case EVENT_NET_RX:            return "NIC receives Ethernet frame";
+        case EVENT_NAPI_POLL:         return "NAPI poll drains RX ring";
+        case EVENT_ETHERNET_RX:       return "Ethernet frame type decoded";
         case EVENT_IRQ_ENTRY:         return "CPU enters IRQ handler";
         case EVENT_SOFTIRQ_ENTRY:     return "SoftIRQ (NET_RX_SOFTIRQ) scheduled";
         case EVENT_IP_RCV:            return "IPv4 layer validates header";
+        case EVENT_NETFILTER_HOOK:    return "Netfilter hook processing";
+        case EVENT_ROUTE_LOOKUP:      return "Routing decision lookup";
         case EVENT_TCP_V4_RCV:        return "TCP layer finds destination socket";
+        case EVENT_TCP_STATE_MACHINE: return "TCP state machine update";
         case EVENT_TCP_DATA_QUEUE:    return "Socket receive queue copies payload";
         case EVENT_SOCK_DEF_READABLE: return "Socket marked readable, recv() wakes up";
+        case EVENT_SCHED_WAKEUP:      return "Scheduler wakeup triggered";
+        case EVENT_SCHED_SWITCH:      return "Context switch between tasks";
+        case EVENT_NGINX_HTTP_PARSE:  return "nginx parses HTTP request";
+        case EVENT_NGINX_REVERSE_PROXY:return "nginx enters reverse proxy stage";
+        case EVENT_NGINX_BACKEND_SOCKET:return "nginx backend socket interaction";
+        case EVENT_NGINX_RESPONSE_GEN:return "nginx finalizes response";
+        case EVENT_NGINX_RESPONSE_TX: return "nginx writes response to client";
         case EVENT_ACCEPT4_ENTER:     return "accept() called by application";
         case EVENT_ACCEPT4_EXIT:      return "accept() returned new socket fd";
         case EVENT_RECVFROM_ENTER:    return "recv() called, waiting for HTTP request";
@@ -228,7 +252,11 @@ static const char *seq_actor(uint32_t event)
     switch (event)
     {
         case EVENT_NET_RX:
+        case EVENT_NAPI_POLL:
+        case EVENT_ETHERNET_RX:
         case EVENT_IP_RCV:
+        case EVENT_NETFILTER_HOOK:
+        case EVENT_ROUTE_LOOKUP:
         case EVENT_TCP_V4_RCV:
             return "NET";
 
@@ -240,7 +268,12 @@ static const char *seq_actor(uint32_t event)
 
         case EVENT_TCP_DATA_QUEUE:
         case EVENT_SOCK_DEF_READABLE:
+        case EVENT_TCP_STATE_MACHINE:
             return "KERNEL";
+
+        case EVENT_SCHED_WAKEUP:
+        case EVENT_SCHED_SWITCH:
+            return "SCHED";
 
         case EVENT_RECVFROM_ENTER:
         case EVENT_RECVFROM_EXIT:
@@ -248,6 +281,11 @@ static const char *seq_actor(uint32_t event)
         case EVENT_SENDTO_EXIT:
         case EVENT_ACCEPT4_ENTER:
         case EVENT_ACCEPT4_EXIT:
+        case EVENT_NGINX_HTTP_PARSE:
+        case EVENT_NGINX_REVERSE_PROXY:
+        case EVENT_NGINX_BACKEND_SOCKET:
+        case EVENT_NGINX_RESPONSE_GEN:
+        case EVENT_NGINX_RESPONSE_TX:
             return "APP";
 
         case EVENT_TCP_SENDMSG:
@@ -751,6 +789,7 @@ void timeline_init(void)
                 fprintf(seq, "    participant IRQ\n");
                 fprintf(seq, "    participant SOFTIRQ\n");
                 fprintf(seq, "    participant KERNEL\n");
+                fprintf(seq, "    participant SCHED\n");
                 fprintf(seq, "    participant TX\n");
                 fclose(seq);
             }

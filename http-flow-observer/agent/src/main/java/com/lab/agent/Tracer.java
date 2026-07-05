@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class Tracer {
     private static final String TOMCAT = "TOMCAT";
     private static final String SPRING_MVC = "SPRING_MVC";
+    private static final boolean DEBUG = "1".equals(System.getenv("HTTP_FLOW_AGENT_DEBUG"));
 
     private static final String SECTION_NETWORK = "Network layer";
     private static final String SECTION_KERNEL_SOCKET = "Kernel socket layer";
@@ -52,6 +53,15 @@ public final class Tracer {
         enterInternal(stage, className, methodName, methodDesc, normaliseSql(sql));
     }
 
+    public static void enterPrepared(String stage,
+                                     String className,
+                                     String methodName,
+                                     String methodDesc,
+                                     Object statement) {
+        String sql = TracerContext.lookupPreparedStatementSql(statement);
+        enterInternal(stage, className, methodName, methodDesc, normaliseSql(sql));
+    }
+
     private static void enterInternal(String stage,
                                       String className,
                                       String methodName,
@@ -64,6 +74,10 @@ public final class Tracer {
         }
 
         if (!timeline.isActive()) {
+            if (DEBUG && isDbStage(stage)) {
+                System.out.println("[FlowAgent] dropped DB span without active request context: "
+                        + className + "#" + methodName + " thread=" + Thread.currentThread().getName());
+            }
             return;
         }
 
@@ -560,6 +574,10 @@ public final class Tracer {
 
     private static String safe(String value, String def) {
         return (value == null || value.isEmpty()) ? def : value;
+    }
+
+    private static boolean isDbStage(String stage) {
+        return "SQL_QUERY".equals(stage) || "POSTGRESQL".equals(stage);
     }
 
     private static boolean matchesBlock(String selector, MergedStep step) {

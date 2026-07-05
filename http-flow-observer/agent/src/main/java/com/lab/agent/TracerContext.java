@@ -1,6 +1,9 @@
 package com.lab.agent;
 
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * Per-thread HTTP request context.
@@ -8,6 +11,8 @@ import java.lang.reflect.Method;
  * Read by Tracer.dump() to include the URI in the merged request view.
  */
 public final class TracerContext {
+    private static final Map<Object, String> PREPARED_SQL =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private static final ThreadLocal<String> URI    = new ThreadLocal<>();
     private static final ThreadLocal<String> METHOD = new ThreadLocal<>();
@@ -52,6 +57,20 @@ public final class TracerContext {
 
     public static void setBodySize(long size) {
         BODY_SIZE.set(size);
+    }
+
+    public static void bindPreparedStatementSql(Object statement, String sql) {
+        if (statement == null || sql == null || sql.isBlank()) {
+            return;
+        }
+        PREPARED_SQL.put(statement, sql);
+    }
+
+    public static String lookupPreparedStatementSql(Object statement) {
+        if (statement == null) {
+            return null;
+        }
+        return PREPARED_SQL.get(statement);
     }
 
     public static void captureRequest(Object request) {

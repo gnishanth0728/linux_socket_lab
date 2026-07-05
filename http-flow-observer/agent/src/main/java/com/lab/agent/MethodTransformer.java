@@ -12,6 +12,7 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.commons.AdviceAdapter;
 
 public final class MethodTransformer implements ClassFileTransformer {
+    private static final boolean DEBUG = "1".equals(System.getenv("HTTP_FLOW_AGENT_DEBUG"));
     private final String appPackage;
 
     public MethodTransformer(String appPackage) {
@@ -54,8 +55,22 @@ public final class MethodTransformer implements ClassFileTransformer {
                         return mv;
                     }
 
+                    if (DEBUG) {
+                        System.out.println("[FlowAgent] instrument " + className + "#" + name + descriptor + " stage=" + stage);
+                    }
+
                     return new AdviceAdapter(Opcodes.ASM9, mv, access, name, descriptor) {
                         private final boolean captureSql = descriptor.startsWith("(Ljava/lang/String;");
+                        private final boolean jdbcStage = "SQL_QUERY".equals(stage) || "POSTGRESQL".equals(stage);
+                        private final boolean preparedExecute = jdbcStage
+                                && !captureSql
+                                && (className.endsWith("PreparedStatement")
+                                    || className.endsWith("CallableStatement")
+                                    || className.contains("PreparedStatement"))
+                                && isSqlMethod(name);
+                        private final boolean prepareFactory = jdbcStage
+                                && captureSql
+                                && methodCreatesPreparedStatement(name);
 
                         @Override
                         protected void onMethodEnter() {
@@ -70,6 +85,13 @@ public final class MethodTransformer implements ClassFileTransformer {
                                         "com/lab/agent/Tracer",
                                         "enterSql",
                                         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+                                        false);
+                            } else if (preparedExecute) {
+                                loadThis();
+                                visitMethodInsn(INVOKESTATIC,
+                                        "com/lab/agent/Tracer",
+                                        "enterPrepared",
+                                        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Object;)V",
                                         false);
                             } else {
                                 visitMethodInsn(INVOKESTATIC,
@@ -93,6 +115,16 @@ public final class MethodTransformer implements ClassFileTransformer {
 
                         @Override
                         protected void onMethodExit(int opcode) {
+                            if (prepareFactory && opcode == ARETURN) {
+                                dup();
+                                loadArg(0);
+                                visitMethodInsn(INVOKESTATIC,
+                                        "com/lab/agent/TracerContext",
+                                        "bindPreparedStatementSql",
+                                        "(Ljava/lang/Object;Ljava/lang/String;)V",
+                                        false);
+                            }
+
                             visitLdcInsn(stage);
                             visitLdcInsn(className);
                             visitLdcInsn(name);
@@ -229,6 +261,13 @@ public final class MethodTransformer implements ClassFileTransformer {
                 || methodName.startsWith("batch")
                 || methodName.startsWith("call")
                 || methodName.startsWith("nativeQuery");
+    }
+
+    private static boolean methodCreatesPreparedStatement(String methodName) {
+        return "prepareStatement".equals(methodName)
+                || "prepareCall".equals(methodName)
+                || "createQuery".equals(methodName)
+                || "createNativeQuery".equals(methodName);
     }
 
     private static boolean isHibernateQueryMethod(String className, String methodName) {

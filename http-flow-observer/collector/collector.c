@@ -15,6 +15,7 @@ static volatile sig_atomic_t running = 1;
 static struct event_queue queue;
 
 static int verbose_events = 0;
+static uint16_t filter_port = 0;   /* 0 = all ports */
 
 /* ============================================================
  * Event Name
@@ -100,8 +101,14 @@ int collector_handle_event(void *ctx, void *data, size_t len)
     switch (e->event)
     {
         case EVENT_TCP_V4_RCV:
-            /* new inbound segment — start (or restart) socket timeline */
-            timeline_start(e->socket_ptr, e);
+            /* Only track this connection if it matches the port filter.
+             * dport is the server-side listening port (e.g. 8080). */
+            if (filter_port == 0
+                || e->dport == filter_port
+                || e->sport == filter_port)
+            {
+                timeline_start(e->socket_ptr, e);
+            }
             break;
 
         case EVENT_TCP_SENDMSG:
@@ -171,9 +178,33 @@ int collector_run(struct ring_buffer *rb)
     v = getenv("HTTP_FLOW_VERBOSE_EVENTS");
     verbose_events = (v && *v && v[0] != '0') ? 1 : 0;
 
+    {
+        const char *p = getenv("HTTP_FLOW_PORT");
+        if (p && *p)
+        {
+            int port_val = atoi(p);
+            if (port_val > 0 && port_val <= 65535)
+                filter_port = (uint16_t)port_val;
+        }
+    }
+
     event_queue_init(&queue);
     connection_table_init();
     timeline_init();
+
+    printf("\n");
+    printf("HTTP Flow Observer\n");
+    printf("==================\n");
+
+    if (filter_port > 0)
+        printf("Tracking port : %u only\n", filter_port);
+    else
+        printf("Tracking port : all  (set HTTP_FLOW_PORT=8080 to filter)\n");
+
+    if (verbose_events)
+        printf("Event stream  : verbose\n");
+    else
+        printf("Event stream  : request-centric  (set HTTP_FLOW_VERBOSE_EVENTS=1 for raw stream)\n");
 
     printf("\n");
 
@@ -188,11 +219,6 @@ int collector_run(struct ring_buffer *rb)
                "Event");
 
         printf("-------------------------------------------------------------------------------\n");
-    }
-    else
-    {
-        printf("Request-centric mode enabled.\n");
-        printf("Set HTTP_FLOW_VERBOSE_EVENTS=1 to print raw event stream.\n\n");
     }
 
     while (running)

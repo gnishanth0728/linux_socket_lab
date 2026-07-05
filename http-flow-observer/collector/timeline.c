@@ -785,6 +785,8 @@ void timeline_add_event(uint64_t socket, const struct event *e)
 void timeline_finish(uint64_t socket, const struct event *e)
 {
     struct timeline *tl;
+    const char      *min_env;
+    unsigned int     min_steps = 3;   /* skip noise like 1-2 event internal conns */
 
     if (!socket || !e)
         return;
@@ -794,6 +796,23 @@ void timeline_finish(uint64_t socket, const struct event *e)
         return;
 
     append(tl, e);
+
+    /* allow override via env: HTTP_FLOW_MIN_STEPS=1 to see everything */
+    min_env = getenv("HTTP_FLOW_MIN_STEPS");
+    if (min_env && *min_env)
+    {
+        int v = atoi(min_env);
+        if (v >= 1)
+            min_steps = (unsigned int)v;
+    }
+
+    if (tl->count < min_steps)
+    {
+        /* too few events — internal/background connection, silently discard */
+        tl->active = false;
+        tl->count  = 0;
+        return;
+    }
 
     write_kernel_request_file(tl);
     timeline_print(socket);
@@ -814,38 +833,68 @@ void timeline_print(uint64_t socket)
     if (!tl || tl->count == 0)
         return;
 
-    ip_to_str(tl->entries[0].e.saddr, src);
-    ip_to_str(tl->entries[0].e.daddr, dst);
+void timeline_print(uint64_t socket)
+{
+    struct timeline *tl = timeline_find(socket);
+    unsigned int i;
+    uint64_t total = 0;
+    char src[32];
+    char dst[32];
+    uint32_t sa = 0, da = 0;
+    uint16_t sp = 0, dp = 0;
+    const char *comm;
+
+    if (!tl || tl->count == 0)
+        return;
+
+    /* find first entry that has valid IP addresses */
+    for (i = 0; i < tl->count; i++)
+    {
+        const struct event *ev = &tl->entries[i].e;
+        if (ev->saddr || ev->daddr)
+        {
+            sa = ev->saddr; da = ev->daddr;
+            sp = ev->sport; dp = ev->dport;
+            break;
+        }
+    }
+
+    ip_to_str(sa, src);
+    ip_to_str(da, dst);
+    comm = tl->entries[0].e.comm;
 
     printf("\n");
-    printf("====================================================================\n");
-    printf("KERNEL NETWORK PATH  socket=0x%llx\n", (unsigned long long)socket);
-    printf("Client: %s:%u  →  Server: %s:%u\n",
-           src, tl->entries[0].e.sport,
-           dst, tl->entries[0].e.dport);
-    printf("====================================================================\n");
+    printf("========================================================\n");
+    printf("KERNEL REQUEST  socket=0x%llx  pid=%-6u  proc=%s\n",
+           (unsigned long long)socket,
+           tl->entries[0].e.pid,
+           (comm && comm[0]) ? comm : "?");
+    printf("Client : %s:%-5u    Server : %s:%u\n",
+           src, sp, dst, dp);
+    printf("--------------------------------------------------------\n");
 
     for (i = 0; i < tl->count; i++)
     {
         const struct timeline_entry *te = &tl->entries[i];
-
-        printf("[✓] STEP %u  %s\n", i + 1, event_desc(te->e.event));
+        const struct event *ev = &te->e;
 
         if (i == 0)
-            printf("        %-28s\n", event_name(te->e.event));
+            printf("[✓] STEP %-2u  %-38s\n",
+                   i + 1, event_desc(ev->event));
         else
-            printf("        %-28s  Δ %.3f us\n",
-                   event_name(te->e.event),
+            printf("[✓] STEP %-2u  %-38s  +%.3f us\n",
+                   i + 1, event_desc(ev->event),
                    (double)te->delta_ns / 1000.0);
     }
 
     if (tl->count > 1)
-        total = tl->entries[tl->count - 1].e.timestamp - tl->entries[0].e.timestamp;
+        total = tl->entries[tl->count - 1].e.timestamp
+              - tl->entries[0].e.timestamp;
 
-    printf("\n====================================================================\n");
-    printf("Kernel path: %.3f us  (%u steps)\n", (double)total / 1000.0, tl->count);
-    printf("Handoff file: %s\n", KERNEL_REQUEST_FILE);
-    printf("====================================================================\n\n");
+    printf("\n");
+    printf("Kernel path : %.3f us  (%u steps)\n",
+           (double)total / 1000.0, tl->count);
+    printf("========================================================\n\n");
 }
 
 void timeline_clear(uint64_t socket)

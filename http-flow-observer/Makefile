@@ -77,10 +77,14 @@ clean:
 
 # ============================================================
 # Run
+# Override app port: make run APP_PORT=8080
 # ============================================================
 
+APP_PORT ?= 8080
+
 run: all
-	sudo ./$(APP)
+	@echo "Tracking port $(APP_PORT) — Ctrl-C to stop"
+	HTTP_FLOW_PORT=$(APP_PORT) sudo -E ./$(APP)
 
 # ============================================================
 # Live UI  (Build 6)

@@ -12,9 +12,6 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.commons.AdviceAdapter;
 
 public final class MethodTransformer implements ClassFileTransformer {
-    private static final String JAVAX_HTTP_REQUEST = "javax/servlet/http/HttpServletRequest";
-    private static final String JAKARTA_HTTP_REQUEST = "jakarta/servlet/http/HttpServletRequest";
-
     private final String appPackage;
 
     public MethodTransformer(String appPackage) {
@@ -85,109 +82,11 @@ public final class MethodTransformer implements ClassFileTransformer {
                             // Capture request URI for merged request-centric view.
                             // DispatcherServlet.doDispatch(HttpServletRequest, HttpServletResponse)
                             if ("SPRING_MVC".equals(stage) && "doDispatch".equals(name)) {
-                                String requestType = requestInterfaceFor(descriptor);
-                                if (requestType == null) {
-                                    return;
-                                }
-
                                 loadArg(0);
-                                visitMethodInsn(INVOKEINTERFACE,
-                                        requestType,
-                                        "getRequestURI",
-                                        "()Ljava/lang/String;",
-                                        true);
-                                visitMethodInsn(INVOKESTATIC,
-                                        "com/lab/agent/TracerContext",
-                                        "setRequestUri",
-                                        "(Ljava/lang/String;)V",
-                                        false);
-
-                                loadArg(0);
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getMethod",
-                                    "()Ljava/lang/String;",
-                                    true);
                                 visitMethodInsn(INVOKESTATIC,
                                     "com/lab/agent/TracerContext",
-                                    "setRequestMethod",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getProtocol",
-                                    "()Ljava/lang/String;",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setRequestVersion",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitLdcInsn("Host");
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getHeader",
-                                    "(Ljava/lang/String;)Ljava/lang/String;",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setHeaderHost",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitLdcInsn("User-Agent");
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getHeader",
-                                    "(Ljava/lang/String;)Ljava/lang/String;",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setHeaderUserAgent",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitLdcInsn("Accept");
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getHeader",
-                                    "(Ljava/lang/String;)Ljava/lang/String;",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setHeaderAccept",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitLdcInsn("Connection");
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getHeader",
-                                    "(Ljava/lang/String;)Ljava/lang/String;",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setHeaderConnection",
-                                    "(Ljava/lang/String;)V",
-                                    false);
-
-                                loadArg(0);
-                                visitMethodInsn(INVOKEINTERFACE,
-                                    requestType,
-                                    "getContentLengthLong",
-                                    "()J",
-                                    true);
-                                visitMethodInsn(INVOKESTATIC,
-                                    "com/lab/agent/TracerContext",
-                                    "setBodySize",
-                                    "(J)V",
+                                    "captureRequest",
+                                    "(Ljava/lang/Object;)V",
                                     false);
                             }
                         }
@@ -308,16 +207,6 @@ public final class MethodTransformer implements ClassFileTransformer {
             return "SQL_QUERY";
         }
 
-        return null;
-    }
-
-    private static String requestInterfaceFor(String descriptor) {
-        if (descriptor.contains("L" + JAKARTA_HTTP_REQUEST + ";")) {
-            return JAKARTA_HTTP_REQUEST;
-        }
-        if (descriptor.contains("L" + JAVAX_HTTP_REQUEST + ";")) {
-            return JAVAX_HTTP_REQUEST;
-        }
         return null;
     }
 }

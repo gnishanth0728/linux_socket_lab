@@ -1,5 +1,7 @@
 package com.lab.agent;
 
+import java.lang.reflect.Method;
+
 /**
  * Per-thread HTTP request context.
  * Populated by the MethodTransformer when DispatcherServlet.doDispatch fires.
@@ -50,6 +52,21 @@ public final class TracerContext {
 
     public static void setBodySize(long size) {
         BODY_SIZE.set(size);
+    }
+
+    public static void captureRequest(Object request) {
+        if (request == null) {
+            return;
+        }
+
+        trySetString(request, "getRequestURI", TracerContext::setRequestUri);
+        trySetString(request, "getMethod", TracerContext::setRequestMethod);
+        trySetString(request, "getProtocol", TracerContext::setRequestVersion);
+        trySetHeader(request, "Host", TracerContext::setHeaderHost);
+        trySetHeader(request, "User-Agent", TracerContext::setHeaderUserAgent);
+        trySetHeader(request, "Accept", TracerContext::setHeaderAccept);
+        trySetHeader(request, "Connection", TracerContext::setHeaderConnection);
+        trySetLong(request, "getContentLengthLong", TracerContext::setBodySize);
     }
 
     public static String getRequestUri() {
@@ -116,5 +133,54 @@ public final class TracerContext {
         BODY_SIZE.remove();
         CLIENT.remove();
         SERVER.remove();
+    }
+
+    private static void trySetString(Object target,
+                                     String methodName,
+                                     StringConsumer consumer) {
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            Object value = method.invoke(target);
+            if (value instanceof String) {
+                consumer.accept((String) value);
+            }
+        } catch (ReflectiveOperationException ignored) {
+        }
+    }
+
+    private static void trySetHeader(Object target,
+                                     String headerName,
+                                     StringConsumer consumer) {
+        try {
+            Method method = target.getClass().getMethod("getHeader", String.class);
+            Object value = method.invoke(target, headerName);
+            if (value instanceof String) {
+                consumer.accept((String) value);
+            }
+        } catch (ReflectiveOperationException ignored) {
+        }
+    }
+
+    private static void trySetLong(Object target,
+                                   String methodName,
+                                   LongConsumer consumer) {
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            Object value = method.invoke(target);
+            if (value instanceof Long) {
+                consumer.accept((Long) value);
+            }
+        } catch (ReflectiveOperationException ignored) {
+        }
+    }
+
+    @FunctionalInterface
+    private interface StringConsumer {
+        void accept(String value);
+    }
+
+    @FunctionalInterface
+    private interface LongConsumer {
+        void accept(long value);
     }
 }

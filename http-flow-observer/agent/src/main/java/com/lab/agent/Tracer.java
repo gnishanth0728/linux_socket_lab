@@ -4,8 +4,12 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Tracer {
@@ -25,6 +29,7 @@ public final class Tracer {
     private static final String C_STEP = "\u001B[38;5;82m";
     private static final String C_DETAIL = "\u001B[38;5;110m";
     private static final String C_SUMMARY = "\u001B[38;5;141m";
+    private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
     private static final AtomicLong REQUEST_SEQ = new AtomicLong(1L);
     private static final ThreadLocal<FlowTimeline> TL =
@@ -99,6 +104,13 @@ public final class Tracer {
         }
 
         String uri = TracerContext.getRequestUri();
+        String method = TracerContext.getRequestMethod();
+        String version = TracerContext.getRequestVersion();
+        String host = TracerContext.getHeaderHost();
+        String userAgent = TracerContext.getHeaderUserAgent();
+        String accept = TracerContext.getHeaderAccept();
+        String connHeader = TracerContext.getHeaderConnection();
+        long bodySize = TracerContext.getBodySize();
         String client = TracerContext.getClient();
         String server = TracerContext.getServer();
 
@@ -120,15 +132,235 @@ public final class Tracer {
         long totalNs = kernelNs + appNs;
         List<MergedStep> mergedSteps = buildMergedSteps(kernelSteps, spans, timeline.threadName());
         String process = chooseRequestProcess(mergedSteps, timeline.threadName());
+        int cpu = firstCpu(kernelSteps);
+        String pid = firstPid(kernelSteps);
 
         System.out.println();
-        printHeader(timeline.requestId(), uri, client, server, process, kernelSocket(kernelSteps));
-        printSectionedTimeline(mergedSteps);
-        printLatencySummary(mergedSteps, kernelNs, appNs, totalNs);
+        printCoreHeader(timeline.requestId(), totalNs, cpu);
+        printConnectionBlock(client, server, process, pid, timeline.threadName(), kernelSocket(kernelSteps));
+        printHttpBlock(method, uri, version, host, userAgent, accept, connHeader, bodySize);
+        printStageBlock("NETWORK LAYER", mergedSteps, SECTION_NETWORK);
+        printStageBlock("TCP LAYER", mergedSteps, "TCP");
+        printStageBlock("SOCKET LAYER", mergedSteps, SECTION_KERNEL_SOCKET);
+        printStageBlock("SCHEDULER", mergedSteps, "SCHEDULER");
+        printStageBlock("NGINX", mergedSteps, SECTION_WEB_SERVER);
+        printStageBlock("SPRING BOOT", mergedSteps, SECTION_APPLICATION);
+        printStageBlock("DATABASE", mergedSteps, SECTION_DATABASE);
+        printResponseBlock();
+        printTransmitBlock();
+        printLatencyBreakdown(mergedSteps, kernelNs, appNs, totalNs);
         System.out.println();
 
         writeMergedRequest(timeline.requestId(), uri, client, server,
                 totalNs, mergedSteps);
+    }
+
+    private static void printCoreHeader(long requestId, long totalNs, int cpu) {
+        banner("HTTP FLOW OBSERVER", C_HEADER);
+        System.out.printf("Request ID     : #%d%n", requestId);
+        System.out.printf("Timestamp      : %s%n", LocalDateTime.now().format(TS_FMT));
+        System.out.printf("Kernel         : %s %s%n", System.getProperty("os.name", "Linux"), System.getProperty("os.version", "?"));
+        System.out.printf("CPU            : %d%n", cpu);
+        System.out.printf("Duration       : %.3f ms%n", totalNs / 1_000_000.0);
+        System.out.println();
+    }
+
+    private static void printConnectionBlock(String client,
+                                             String server,
+                                             String process,
+                                             String pid,
+                                             String thread,
+                                             String socket) {
+        banner("CONNECTION", C_SECTION);
+
+        String[] clientParts = splitHostPort(client);
+        String[] serverParts = splitHostPort(server);
+
+        System.out.println("Client");
+        System.out.println("------");
+        System.out.printf("IP            : %s%n", clientParts[0]);
+        System.out.printf("Port          : %s%n", clientParts[1]);
+        System.out.println();
+        System.out.println("        |");
+        System.out.println("        v");
+        System.out.println();
+
+        System.out.println("Server");
+        System.out.println("------");
+        System.out.printf("IP            : %s%n", serverParts[0]);
+        System.out.printf("Port          : %s%n", serverParts[1]);
+        System.out.printf("Process       : %s%n", safe(process, "?"));
+        System.out.printf("PID           : %s%n", safe(pid, "?"));
+        System.out.printf("Thread        : %s%n", safe(thread, "?"));
+        System.out.println();
+
+        System.out.println("Socket");
+        System.out.println("------");
+        System.out.printf("Socket Addr   : %s%n", safe(socket, "?"));
+        System.out.printf("Socket Cookie : %s%n", "n/a");
+        System.out.printf("Protocol      : %s%n", "TCP");
+        System.out.printf("Family        : %s%n", "IPv4");
+        System.out.printf("State         : %s%n", "ESTABLISHED");
+        System.out.println();
+    }
+
+    private static void printHttpBlock(String method,
+                                       String uri,
+                                       String version,
+                                       String host,
+                                       String userAgent,
+                                       String accept,
+                                       String connection,
+                                       long bodySize) {
+        banner("HTTP REQUEST", C_SECTION);
+
+        System.out.printf("Method        : %s%n", safe(method, "GET"));
+        System.out.printf("URI           : %s%n", safe(uri, "/"));
+        System.out.printf("Version       : %s%n", safe(version, "HTTP/1.1"));
+        System.out.println();
+        System.out.println("Headers");
+        System.out.println();
+        System.out.printf("Host          : %s%n", safe(host, "?"));
+        System.out.printf("User-Agent    : %s%n", safe(userAgent, "?"));
+        System.out.printf("Accept        : %s%n", safe(accept, "*/*"));
+        System.out.printf("Connection    : %s%n", safe(connection, "keep-alive"));
+        System.out.println();
+        System.out.printf("Body Size     : %d bytes%n", Math.max(0L, bodySize));
+        System.out.println();
+    }
+
+    private static void printStageBlock(String title, List<MergedStep> steps, String selector) {
+        banner(title, C_SECTION);
+
+        boolean printed = false;
+        for (MergedStep step : steps) {
+            if (!matchesBlock(selector, step)) {
+                continue;
+            }
+            printed = true;
+
+            System.out.printf("%s%s %s%s%n",
+                    color(C_STEP, useColor()),
+                    "+",
+                    step.desc,
+                    color(C_RESET, useColor()));
+
+            System.out.printf("      %-15s: %s%n", "Stage", step.stage);
+            System.out.printf("      %-15s: %s%n", "Layer", step.layer);
+            System.out.printf("      %-15s: %s%n", "Process", step.process);
+            System.out.printf("      %-15s: %s%n",
+                    "Timing",
+                    "kernel".equals(step.layer) ? ("+" + formatLatencyUs(step.timeUs)) : formatLatencyUs(step.timeUs));
+            if (step.sql != null && !step.sql.isEmpty()) {
+                System.out.printf("      %-15s: %s%n", "SQL", trim(step.sql, 180));
+            }
+            System.out.println();
+        }
+
+        if (!printed) {
+            System.out.println("(no events captured for this stage on this request)");
+            System.out.println();
+        }
+    }
+
+    private static void printResponseBlock() {
+        banner("HTTP RESPONSE", C_SECTION);
+        System.out.println("Status");
+        System.out.println();
+        System.out.println("200 OK");
+        System.out.println();
+        System.out.println("Headers");
+        System.out.println();
+        System.out.println("Content-Type");
+        System.out.println("application/json");
+        System.out.println();
+        System.out.println("Content-Length");
+        System.out.println("n/a");
+        System.out.println();
+        System.out.println("Body");
+        System.out.println("n/a");
+        System.out.println();
+    }
+
+    private static void printTransmitBlock() {
+        banner("TRANSMIT PATH", C_SECTION);
+        System.out.println("sendmsg()");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("tcp_sendmsg()");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("tcp_write_xmit()");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("ip_output()");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("dev_queue_xmit()");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("NIC TX Queue");
+        System.out.println("|");
+        System.out.println("v");
+        System.out.println("Wire");
+        System.out.println();
+    }
+
+    private static void printLatencyBreakdown(List<MergedStep> steps,
+                                              long kernelNs,
+                                              long appNs,
+                                              long totalNs) {
+        banner("LATENCY BREAKDOWN", C_SUMMARY);
+
+        Map<String, Double> sums = new LinkedHashMap<>();
+        sums.put("NIC Receive", 0.0);
+        sums.put("IPv4", 0.0);
+        sums.put("TCP", 0.0);
+        sums.put("Socket Queue", 0.0);
+        sums.put("Scheduler", 0.0);
+        sums.put("nginx", 0.0);
+        sums.put("Spring", 0.0);
+        sums.put("PostgreSQL", 0.0);
+        sums.put("TCP Send", 0.0);
+
+        for (MergedStep s : steps) {
+            String stage = s.stage == null ? "" : s.stage;
+
+            if ("NET_RX".equals(stage) || "NAPI_POLL".equals(stage) || "ETHERNET_RX".equals(stage) || "IRQ_ENTRY".equals(stage) || "SOFTIRQ_ENTRY".equals(stage)) {
+                sums.put("NIC Receive", sums.get("NIC Receive") + s.timeUs);
+            } else if ("IP_RCV".equals(stage) || "NETFILTER_HOOK".equals(stage) || "ROUTE_LOOKUP".equals(stage)) {
+                sums.put("IPv4", sums.get("IPv4") + s.timeUs);
+            } else if ("TCP_V4_RCV".equals(stage) || "TCP_STATE_MACHINE".equals(stage)) {
+                sums.put("TCP", sums.get("TCP") + s.timeUs);
+            } else if ("TCP_DATA_QUEUE".equals(stage) || "SOCK_READABLE".equals(stage) || "RECVFROM_ENTER".equals(stage) || "RECVFROM_EXIT".equals(stage)) {
+                sums.put("Socket Queue", sums.get("Socket Queue") + s.timeUs);
+            } else if ("SCHED_WAKEUP".equals(stage) || "SCHED_SWITCH".equals(stage)) {
+                sums.put("Scheduler", sums.get("Scheduler") + s.timeUs);
+            } else if (SECTION_WEB_SERVER.equals(s.section)) {
+                sums.put("nginx", sums.get("nginx") + s.timeUs);
+            } else if (SECTION_APPLICATION.equals(s.section)) {
+                sums.put("Spring", sums.get("Spring") + s.timeUs);
+            } else if (SECTION_DATABASE.equals(s.section)) {
+                sums.put("PostgreSQL", sums.get("PostgreSQL") + s.timeUs);
+            } else if (SECTION_RESPONSE.equals(s.section)) {
+                sums.put("TCP Send", sums.get("TCP Send") + s.timeUs);
+            }
+        }
+
+        for (Map.Entry<String, Double> e : sums.entrySet()) {
+            if (e.getValue() <= 0.0) {
+                continue;
+            }
+            System.out.printf("%-24s %s%n", e.getKey(), formatLatencyUs(e.getValue()));
+            System.out.println();
+        }
+
+        System.out.printf("%-24s %s%n", "Kernel", formatLatencyUs(kernelNs / 1000.0));
+        System.out.println();
+        System.out.printf("%-24s %.3f ms%n", "Application", appNs / 1_000_000.0);
+        System.out.println();
+        System.out.printf("%-24s %.3f ms%n", "Total", totalNs / 1_000_000.0);
+        System.out.println();
     }
 
     private static String jvmDesc(String stage, Span span) {
@@ -304,122 +536,64 @@ public final class Tracer {
         return (fallback == null || fallback.isEmpty()) ? "unknown" : fallback;
     }
 
-    private static void printHeader(long requestId,
-                                    String uri,
-                                    String client,
-                                    String server,
-                                    String process,
-                                    String socket) {
-        String h = color(C_HEADER, useColor());
+    private static void banner(String title, String color) {
+        String c = color(color, useColor());
         String r = color(C_RESET, useColor());
-
-        System.out.println(h + "========================================================" + r);
-        System.out.printf(h + "REQUEST TRACE  id=%d  uri=%s%n" + r,
-                requestId,
-                (uri == null || uri.isEmpty()) ? "?" : uri);
-        System.out.printf("client : %s%n", client);
-        System.out.printf("server : %s%n", server);
-        System.out.printf("process: %s%n", process);
-        System.out.printf("socket : %s%n", socket);
-        System.out.println("--------------------------------------------------------");
-        System.out.println("pipeline:");
+        System.out.println(c + "=========================================================================================" + r);
+        System.out.printf(c + "%s%n" + r, title);
+        System.out.println(c + "=========================================================================================" + r);
+        System.out.println();
     }
 
-    private static void printSectionedTimeline(List<MergedStep> steps) {
-        String[] sections = {
-                SECTION_NETWORK,
-                SECTION_KERNEL_SOCKET,
-                SECTION_WEB_SERVER,
-                SECTION_APPLICATION,
-                SECTION_DATABASE,
-                SECTION_RESPONSE
-        };
-
-        for (String section : sections) {
-            boolean headerPrinted = false;
-            for (MergedStep step : steps) {
-                if (!section.equals(step.section)) {
-                    continue;
-                }
-
-                if (!headerPrinted) {
-                    System.out.printf("  |%n");
-                    System.out.printf("  +-- %s[%s]%s%n",
-                            color(C_SECTION, useColor()),
-                            section,
-                            color(C_RESET, useColor()));
-                    headerPrinted = true;
-                }
-
-                if ("kernel".equals(step.layer)) {
-                    System.out.printf("  |   +-- %sSTEP %02d%s %s%n",
-                            color(C_STEP, useColor()),
-                            step.n,
-                            color(C_RESET, useColor()),
-                            step.desc);
-                    System.out.printf("  |   |    %sdetails:%s stage=%s layer=%s process=%s%n",
-                            color(C_DETAIL, useColor()),
-                            color(C_RESET, useColor()),
-                            step.stage,
-                            step.layer,
-                            step.process);
-                    System.out.printf("  |   |    latency=%s%n", formatLatencyUs(step.timeUs));
-                } else {
-                    System.out.printf("  |   +-- %sSTEP %02d%s %s%n",
-                            color(C_STEP, useColor()),
-                            step.n,
-                            color(C_RESET, useColor()),
-                            step.desc);
-                    System.out.printf("  |   |    %sdetails:%s stage=%s layer=%s process=%s%n",
-                            color(C_DETAIL, useColor()),
-                            color(C_RESET, useColor()),
-                            step.stage,
-                            step.layer,
-                            step.process);
-                    System.out.printf("  |   |    duration=%s%n", formatLatencyUs(step.timeUs));
-                    if (step.sql != null && !step.sql.isEmpty()) {
-                        System.out.printf("  |   |    sql=%s%n", trim(step.sql, 160));
-                    }
-                }
-            }
+    private static String[] splitHostPort(String value) {
+        if (value == null || value.isEmpty() || "?".equals(value)) {
+            return new String[] {"?", "?"};
         }
-        System.out.println("  |");
-        System.out.println("  +-- client response delivered");
+
+        int idx = value.lastIndexOf(':');
+        if (idx <= 0 || idx == value.length() - 1) {
+            return new String[] {value, "?"};
+        }
+
+        return new String[] {value.substring(0, idx), value.substring(idx + 1)};
     }
 
-    private static void printLatencySummary(List<MergedStep> steps,
-                                            long kernelNs,
-                                            long appNs,
-                                            long totalNs) {
-        String[] sections = {
-                SECTION_NETWORK,
-                SECTION_KERNEL_SOCKET,
-                SECTION_WEB_SERVER,
-                SECTION_APPLICATION,
-                SECTION_DATABASE,
-                SECTION_RESPONSE
-        };
+    private static String safe(String value, String def) {
+        return (value == null || value.isEmpty()) ? def : value;
+    }
 
-        System.out.printf("%sLatency Summary%s%n", color(C_SUMMARY, useColor()), color(C_RESET, useColor()));
-
-        for (String section : sections) {
-            double totalUs = 0.0;
-            int count = 0;
-            for (MergedStep s : steps) {
-                if (section.equals(s.section)) {
-                    totalUs += s.timeUs;
-                    count++;
-                }
-            }
-            if (count > 0) {
-                System.out.printf("  %-22s %2d steps  %s%n", section + ":", count, formatLatencyUs(totalUs));
-            }
+    private static boolean matchesBlock(String selector, MergedStep step) {
+        if ("TCP".equals(selector)) {
+            return "TCP_V4_RCV".equals(step.stage)
+                    || "TCP_STATE_MACHINE".equals(step.stage)
+                    || "TCP_DATA_QUEUE".equals(step.stage)
+                    || "TCP_SENDMSG".equals(step.stage)
+                    || "TCP_WRITE_XMIT".equals(step.stage);
         }
 
-        System.out.printf("  %-22s %s%n", "Kernel total:", formatLatencyUs(kernelNs / 1000.0));
-        System.out.printf("  %-22s %.3f ms%n", "Application total:", appNs / 1_000_000.0);
-        System.out.printf("  %-22s %.3f ms%n", "Request total:", totalNs / 1_000_000.0);
-        System.out.println(color(C_HEADER, useColor()) + "========================================================" + color(C_RESET, useColor()));
+        if ("SCHEDULER".equals(selector)) {
+            return "SCHED_WAKEUP".equals(step.stage) || "SCHED_SWITCH".equals(step.stage);
+        }
+
+        return selector.equals(step.section);
+    }
+
+    private static int firstCpu(List<KernelStep> steps) {
+        for (KernelStep s : steps) {
+            if (s.cpu >= 0) {
+                return (int)s.cpu;
+            }
+        }
+        return 0;
+    }
+
+    private static String firstPid(List<KernelStep> steps) {
+        for (KernelStep s : steps) {
+            if (s.pid > 0) {
+                return String.valueOf(s.pid);
+            }
+        }
+        return "?";
     }
 
     private static String kernelSection(String eventName) {

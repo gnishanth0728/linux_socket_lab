@@ -93,6 +93,94 @@ public final class MethodTransformer implements ClassFileTransformer {
                                         "setRequestUri",
                                         "(Ljava/lang/String;)V",
                                         false);
+
+                                loadArg(0);
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getMethod",
+                                    "()Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setRequestMethod",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getProtocol",
+                                    "()Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setRequestVersion",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitLdcInsn("Host");
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getHeader",
+                                    "(Ljava/lang/String;)Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setHeaderHost",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitLdcInsn("User-Agent");
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getHeader",
+                                    "(Ljava/lang/String;)Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setHeaderUserAgent",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitLdcInsn("Accept");
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getHeader",
+                                    "(Ljava/lang/String;)Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setHeaderAccept",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitLdcInsn("Connection");
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getHeader",
+                                    "(Ljava/lang/String;)Ljava/lang/String;",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setHeaderConnection",
+                                    "(Ljava/lang/String;)V",
+                                    false);
+
+                                loadArg(0);
+                                visitMethodInsn(INVOKEINTERFACE,
+                                    "javax/servlet/http/HttpServletRequest",
+                                    "getContentLengthLong",
+                                    "()J",
+                                    true);
+                                visitMethodInsn(INVOKESTATIC,
+                                    "com/lab/agent/TracerContext",
+                                    "setBodySize",
+                                    "(J)V",
+                                    false);
                             }
                         }
 

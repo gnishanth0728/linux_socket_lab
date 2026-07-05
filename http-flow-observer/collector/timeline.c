@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -821,17 +822,6 @@ void timeline_finish(uint64_t socket, const struct event *e)
     tl->active = false;
     tl->count = 0;
 }
-
-void timeline_print(uint64_t socket)
-{
-    struct timeline *tl = timeline_find(socket);
-    unsigned int i;
-    uint64_t total = 0;
-    char src[32];
-    char dst[32];
-
-    if (!tl || tl->count == 0)
-        return;
 
 void timeline_print(uint64_t socket)
 {

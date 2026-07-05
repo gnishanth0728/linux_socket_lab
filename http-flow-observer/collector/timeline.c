@@ -33,6 +33,7 @@ struct perf_metrics
 
 static struct timeline timelines[TIMELINE_TABLE_SIZE];
 static struct perf_metrics metrics;
+static int show_internal_details = 1;
 
 /* ============================================================
  * Basic Helpers
@@ -721,8 +722,13 @@ static void append(struct timeline *tl, const struct event *e)
 
 void timeline_init(void)
 {
+    const char *d;
+
     memset(timelines, 0, sizeof(timelines));
     memset(&metrics, 0, sizeof(metrics));
+
+    d = getenv("HTTP_FLOW_INTERNAL_DETAILS");
+    show_internal_details = !(d && *d && d[0] == '0');
 
     if (ensure_output_dir() == 0)
     {
@@ -730,6 +736,7 @@ void timeline_init(void)
         truncate_file(FLAME_FOLDED);
         truncate_file(METRICS_JSON);
         truncate_file(SEQUENCE_MMD);
+        truncate_file(OUTPUT_DIR "/merged_requests.jsonl");
 
         write_ui_html();
 
@@ -875,6 +882,24 @@ void timeline_print(uint64_t socket)
             printf("[✓] STEP %-2u  %-38s  +%.3f us\n",
                    i + 1, event_desc(ev->event),
                    (double)te->delta_ns / 1000.0);
+
+        if (show_internal_details)
+        {
+            printf("    -> event=%s(%u) pid=%u tid=%u cpu=%u comm=%s\n",
+                   event_name(ev->event),
+                   ev->event,
+                   ev->pid,
+                   ev->tid,
+                   ev->cpu,
+                   (ev->comm[0] ? ev->comm : "?"));
+
+            printf("       socket=0x%llx len=%u seq=%u ack=%u flags=0x%02x\n",
+                   (unsigned long long)ev->socket_ptr,
+                   ev->packet_len,
+                   ev->seq,
+                   ev->ack_seq,
+                   ev->tcp_flags);
+        }
     }
 
     if (tl->count > 1)
